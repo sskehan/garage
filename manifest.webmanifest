@@ -13,6 +13,7 @@
   ],
   "shortcuts": [
     {"name": "Log fuel", "short_name": "Fuel", "url": "./?log=fuel", "icons": [{"src": "icon-192.png", "sizes": "192x192"}]},
+    {"name": "Log charge", "short_name": "Charge", "url": "./?log=charge", "icons": [{"src": "icon-192.png", "sizes": "192x192"}]},
     {"name": "Log odometer", "short_name": "Km", "url": "./?log=odo", "icons": [{"src": "icon-192.png", "sizes": "192x192"}]}
   ]
 }

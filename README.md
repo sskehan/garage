@@ -30,6 +30,16 @@ Loads the Kluger, Yaris, Triumph and Trailer with all service, cost and fuel his
 - **Due tab:** rego, CTP, insurance and service reminders (service km projected from your average driving).
 - **Selling:** vehicle → **Reports** → Sale report → Print / PDF → Save as PDF. Then Edit → Status **Sold** to archive it with sale price and odometer.
 
+## Electric vehicles (v2)
+- **Add the Atto 1:** + Vehicle → *Start from a preset* → Essential or Premium. Fills in specs, warranty (6 yrs/150,000 km car, 8 yrs/160,000 km at 70% battery), 20,000 km/12-month servicing and the handbook's long-interval items. Add the plate, VIN, date bought, odometer when bought and warranty start date.
+- **Home charging:** once a month, Log → Charge → Home: odometer and the month's kWh from the Evnex app. Cost fills in from your home rate (More → Settings).
+- **Public charging:** Log → Charge → Public, from the receipt.
+- **Battery health:** when you do the handbook's full charge from below 10% (every 3–6 months), tick that box and add start %, end % and the kWh for that session.
+- **Parked:** tap *Parked from today* on the vehicle; storage reminders run from then and clear when you next log anything.
+
+## Updating from v1
+Make a backup first. Upload the changed files: `app.js`, `index.html`, `sw.js`, `manifest.webmanifest`, `README.md`. Your records are untouched; the Kluger's warranty and hybrid health check are added automatically the first time v2 opens.
+
 ## Backups — do this regularly
 More → Backup & restore → **Make backup file** → Save to phone, or Share to Drive / email / your NAS.
 Changing phones: install the app on the new phone, then Restore the latest backup.

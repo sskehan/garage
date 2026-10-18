@@ -1,6 +1,6 @@
 "use strict";
 /* Garage Log — offline vehicle records. All data lives on this device (IndexedDB). */
-const APP_ID = "garage-log", BACKUP_VERSION = 1;
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.3";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -226,7 +226,7 @@ function viewGarage() {
   const rem = allReminders().filter(r => r.status !== "ok");
   return `<section class="view">${backupBanner()}
   ${rem.length ? `<button type="button" class="banner ${rem.some(r => r.status === "over") ? "bad" : ""}" data-tab="due" style="text-align:left;cursor:pointer;font:inherit"><span><b>${rem.length} item${rem.length === 1 ? " needs" : "s need"} attention</b> — ${rem.slice(0, 3).map(r => esc(`${vName(r.v)} ${r.label.toLowerCase()}`)).join(", ")}${rem.length > 3 ? "…" : ""}</span><span class="tag">View</span></button>` : ""}
-  <div class="list">${act.map(vcard).join("")}</div>
+  ${S.reorder ? reorderList(act) : `<div class="list">${act.map(vcard).join("")}</div>${act.length > 1 ? `<div class="row"><button type="button" class="btn ghost sm" data-act="reorderOn">⇅ Reorder vehicles</button></div>` : ""}`}
   ${sold.length ? `<div class="row"><button type="button" class="btn ghost sm" data-act="toggleSold">${S.showSold ? "Hide" : "Show"} sold / archived (${sold.length})</button></div>${S.showSold ? `<div class="list">${sold.map(vcard).join("")}</div>` : ""}` : ""}
   </section>`;
 }
@@ -297,7 +297,7 @@ function hrow(e, v, fc) {
     s.push(kmf(e.odo)); if (d.dist != null) s.push(`+${nf(d.dist, 0)} km`); if (e.location) s.push(e.location);
     r = e.cost != null ? money(e.cost) : "—"; rs = d.econ != null ? `${nf(d.econ)} L/100${d.tow ? " 🚚" : ""}` : (e.ppl ? `${money(e.ppl, 3)}/L` : "");
     if (d.odd) tags.push(`<span class="tag soon">check</span>`);
-  } else if (e.type === "service") { t = e.desc || "Service"; if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; }
+  } else if (e.type === "service") { t = e.desc || "Service"; if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; if (e.dealerSoh != null) rs = `🔋 ${nf(e.dealerSoh, 0)}% dealer`; }
   else if (e.type === "expense") { t = (e.category || "Expense") + (e.desc ? " — " + e.desc : ""); if (e.odo != null) s.push(kmf(e.odo)); r = e.cost != null ? money(e.cost) : "—"; }
   else if (e.type === "charge") { const cr = capReading(e, v); t = `${nf(e.kwh, 1)} kWh · ${e.where === "public" ? "Public " + (e.current || "DC") : "Home"}`; if (e.odo != null) s.push(kmf(e.odo)); if (e.location) s.push(e.location); r = e.cost != null ? (e.costEst ? "~" : "") + money(e.cost) : "—"; if (cr) rs = `🔋 ${cr.pct != null ? nf(cr.pct, 0) + "%" : nf(cr.cap, 1) + " kWh"}`; }
   else { t = "Odometer " + kmf(e.odo); if (e.notes) s.push(e.notes); }
@@ -417,6 +417,7 @@ function drawEntry() {
   else if (t === "charge") body = chargeBody(e, v, odoField);
   else if (t === "odo") body = odoField;
   else if (t === "service") body = `${odoField}${svcItemsChecks(e, v)}<div class="field"><label>What was done</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 48 mth / 60k logbook service"><div class="qchips" style="margin-top:4px">${SVC_CHIPS.map(c => `<button type="button" data-act="svcChip" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>
+    ${usesCharge(v) ? `<div class="field" style="max-width:260px"><label>Dealer battery health check (%) — optional</label><input data-k="dealerSoh" inputmode="decimal" data-num="1" value="${e.dealerSoh ?? ""}" placeholder="e.g. 98"><span class="hint">If the dealer gives a battery state-of-health figure at this service.</span></div>` : ""}
     <div class="form2"><div class="field"><label>Workshop</label><input data-k="workshop" list="shops" value="${esc(e.workshop || "")}"><datalist id="shops">${shops.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field mid"><label>Cost $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div>
     <div class="field"><label>Invoice / job no.</label><input data-k="invoice" value="${esc(e.invoice || "")}"></div><div></div>
     <div class="field"><label>Next service due (km)</label><input data-k="nextKm" inputmode="numeric" data-num="1" value="${e.nextKm ?? ""}" placeholder="${v.svcKm ? "auto: +" + v.svcKm.toLocaleString("en-AU") : ""}"></div><div class="field"><label>Next service due (date)</label><input data-k="nextDate" type="date" value="${esc(e.nextDate || "")}"><span class="hint">${v.svcMonths ? `Left blank = ${v.svcMonths} months after the service` : ""}</span></div></div>`;
@@ -503,7 +504,7 @@ async function saveEntry() {
   if (e.type === "charge") prepCharge(e);
   if (e.type !== "charge") for (const k of CH_KEYS) delete e[k];
   if (e.type !== "fuel") { delete e.full; delete e.towing; delete e.litres; delete e.ppl; delete e.grade; if (e.type !== "charge") delete e.location; }
-  if (e.type !== "service") { delete e.nextKm; delete e.nextDate; delete e.workshop; delete e.invoice; delete e.items; }
+  if (e.type !== "service") { delete e.nextKm; delete e.nextDate; delete e.workshop; delete e.invoice; delete e.items; delete e.dealerSoh; }
   if (e.type !== "expense") { delete e.category; delete e.ref; }
   e.id = e.id || uid("e"); e.created = e.created || Date.now(); e.updated = Date.now();
   await dbPut("entries", e);
@@ -544,7 +545,7 @@ function svgLine(pts, { h = 170, yfmt = x => nf(x), color = "var(--accent)", hlC
   const dt = x => { const z = new Date(x); return MON[z.getMonth()] + " " + String(z.getFullYear()).slice(2); };
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${ticks.map(t => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L - 6}" y="${Y(t) + 5}" text-anchor="end">${yfmt(t)}</text>`).join("")}
   ${avg != null ? `<line x1="${L}" x2="${W - R}" y1="${Y(avg)}" y2="${Y(avg)}" stroke="var(--ink-3)" stroke-dasharray="4 4"/>` : ""}
-  <path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>${pts.map(p => `<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${p.hl ? 4.5 : 3}" fill="${p.hl ? hlColor : color}"><title>${esc(p.t || "")}</title></circle>`).join("")}
+  <path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>${pts.map(p => `<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${p.hl ? 4.5 : 3}" fill="${p.c || (p.hl ? hlColor : color)}"><title>${esc(p.t || "")}</title></circle>`).join("")}
   <text x="${L}" y="${H - 4}">${dt(x0)}</text><text x="${W - R}" y="${H - 4}" text-anchor="end">${dt(x1)}</text></svg>`;
 }
 function svgBars(labels, vals, { h = 150, yfmt = x => nf(x, 0), color = "var(--accent)" } = {}) {
@@ -610,7 +611,8 @@ function viewMore() {
     <button type="button" data-act="moreGo" data-v="settings"><b>Settings</b><span class="small muted">Expense categories, reminder windows</span></button>
     <button type="button" data-act="newVehicle"><b>Add a vehicle</b><span class="small muted">Car, motorbike, trailer…</span></button>
     <button type="button" data-act="moreGo" data-v="help"><b>How it works</b><span class="small muted">Economy maths, reminders, storage</span></button>
-  </div></section>`;
+  </div>
+  <div class="row small muted"><span>Garage Log version <b>${APP_VERSION}</b></span><span class="sp"></span><button type="button" class="btn sm ghost" data-act="checkUpdate">Check for update</button></div></section>`;
 }
 function viewSettings() {
   const st = SET();
@@ -660,7 +662,7 @@ async function makeBackup() {
   const st = $("#bkStat"); st.textContent = "Packing…";
   const zip = new JSZip(); const files = await dbAll("files"); const manifest = [];
   for (const f of files) { const ext = (f.type === "image/jpeg" ? "jpg" : f.type === "image/png" ? "png" : f.type === "application/pdf" ? "pdf" : (String(f.name || "").split(".").pop() || "bin")).toLowerCase(); const path = `files/${f.id}.${ext}`; zip.file(path, f.blob); manifest.push({ id: f.id, type: f.type, name: f.name, path }); }
-  const data = { app: APP_ID, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), settings: S.meta.settings || null, vehicles: S.vehicles, entries: S.entries, files: manifest };
+  const data = { app: APP_ID, version: BACKUP_VERSION, appVersion: APP_VERSION, exportedAt: new Date().toISOString(), settings: S.meta.settings || null, vehicles: S.vehicles, entries: S.entries, files: manifest };
   zip.file("backup.json", JSON.stringify(data, null, 1));
   const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
   const name = `garage-backup-${todayISO()}.zip`; _backup = { blob, name };
@@ -693,7 +695,7 @@ async function saveMeta() { await dbPut("meta", { id: "main", ...S.meta }); }
 async function fillStoreInfo() { const el = $("#storeInfo"); if (!el) return; let used = "Unknown", prot = "Unknown"; try { const e = await navigator.storage.estimate(); used = (e.usage / 1048576).toFixed(1) + " MB"; } catch {} try { prot = (await navigator.storage.persisted()) ? "Yes — Chrome won't clear it to save space" : "Not yet — requested when you save"; } catch {} el.innerHTML = `<dt>Storage used</dt><dd>${used}</dd><dt>Protected storage</dt><dd>${prot}</dd>`; }
 async function askPersist() { try { if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) await navigator.storage.persist(); } catch {} }
 /* CSV */
-const CSV_COLS = [["vehicle", e => vName(vById(e.vehicleId))], ["rego", e => (vById(e.vehicleId) || {}).rego], ["type", e => TYPE_LABEL[e.type]], ["date"], ["odometer", e => e.odo], ["category", e => e.type === "expense" ? e.category : e.type === "fuel" ? "Fuel" : e.type === "charge" ? "Charging" : e.type === "service" ? "Service" : ""], ["description", e => e.desc], ["cost", e => e.cost], ["litres"], ["pricePerLitre", e => e.ppl], ["fullTank", e => e.type === "fuel" ? (e.full !== false ? "Y" : "N") : ""], ["towing", e => e.towing ? "Y" : ""], ["L100km", e => { const d = fuelOf(vById(e.vehicleId)).info.get(e.id); return d && d.econ != null ? d.econ.toFixed(2) : ""; }], ["location"], ["grade"], ["workshop"], ["invoice", e => e.invoice || e.ref], ["nextServiceKm", e => e.nextKm], ["nextServiceDate", e => e.nextDate], ["priorOwner", e => isPrev(e, vById(e.vehicleId)) ? "Y" : ""], ["kWh", e => e.kwh], ["chargeWhere", e => e.where], ["charger", e => e.current], ["socStart"], ["socEnd"], ["sessionKwh", e => e.sessKwh], ["estCapacityKwh", e => { const c = capReading(e, vById(e.vehicleId)); return c ? c.cap.toFixed(2) : ""; }], ["costEstimated", e => e.costEst ? "Y" : ""], ["notes"], ["receipts", e => (e.receipts || []).length || ""]];
+const CSV_COLS = [["vehicle", e => vName(vById(e.vehicleId))], ["rego", e => (vById(e.vehicleId) || {}).rego], ["type", e => TYPE_LABEL[e.type]], ["date"], ["odometer", e => e.odo], ["category", e => e.type === "expense" ? e.category : e.type === "fuel" ? "Fuel" : e.type === "charge" ? "Charging" : e.type === "service" ? "Service" : ""], ["description", e => e.desc], ["cost", e => e.cost], ["litres"], ["pricePerLitre", e => e.ppl], ["fullTank", e => e.type === "fuel" ? (e.full !== false ? "Y" : "N") : ""], ["towing", e => e.towing ? "Y" : ""], ["L100km", e => { const d = fuelOf(vById(e.vehicleId)).info.get(e.id); return d && d.econ != null ? d.econ.toFixed(2) : ""; }], ["location"], ["grade"], ["workshop"], ["invoice", e => e.invoice || e.ref], ["nextServiceKm", e => e.nextKm], ["nextServiceDate", e => e.nextDate], ["priorOwner", e => isPrev(e, vById(e.vehicleId)) ? "Y" : ""], ["kWh", e => e.kwh], ["chargeWhere", e => e.where], ["charger", e => e.current], ["socStart"], ["socEnd"], ["sessionKwh", e => e.sessKwh], ["estCapacityKwh", e => { const c = capReading(e, vById(e.vehicleId)); return c ? c.cap.toFixed(2) : ""; }], ["costEstimated", e => e.costEst ? "Y" : ""], ["dealerBatteryPct", e => e.dealerSoh], ["notes"], ["receipts", e => (e.receipts || []).length || ""]];
 function toCSV() { const q = v => { v = v == null ? "" : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }; const rows = [...S.entries].sort((a, b) => vName(vById(a.vehicleId)).localeCompare(vName(vById(b.vehicleId))) || byDateOdo(a, b)); return "﻿" + [CSV_COLS.map(c => c[0]).join(","), ...rows.map(e => CSV_COLS.map(([k, fn]) => q(fn ? fn(e) : e[k])).join(","))].join("\r\n"); }
 function viewExport() { const csv = toCSV(); const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); return `<section class="view">${backMore}<div class="panel"><h3>Export CSV</h3><p style="margin:0">${S.entries.length} records across ${S.vehicles.length} vehicles. Opens in Excel. This is a spreadsheet copy, not a backup — receipts aren't included and it can't be restored.</p><div class="row"><a class="btn primary" href="${url}" download="garage-records-${todayISO()}.csv">Save CSV</a></div><textarea class="csv" readonly aria-label="CSV text">${esc(csv.slice(1, 4000))}${csv.length > 4000 ? "\n…" : ""}</textarea></div></section>`; }
 
@@ -897,36 +899,48 @@ function prepCharge(e) {
 }
 
 /* ---- EV display ---- */
-function latestCap(v) { const c = capReadings(v); return c[c.length - 1] || null; }
-function evCardStats(v, st) { const c = latestCap(v); return [["kWh/100km", st.kwh100 ? nf(st.kwh100) : "—"], ["Battery", c ? (c.pct != null ? nf(c.pct, 0) + "%" : nf(c.cap, 1) + " kWh") : "—"]]; }
+/* battery health: own estimates from charging + dealer state-of-health figures from services */
+function dealerReadings(v) { return ownEntries(v).filter(e => e.type === "service" && e.dealerSoh != null).map(e => ({ e, src: "dealer", pct: e.dealerSoh, cap: v.battKwh ? v.battKwh * e.dealerSoh / 100 : null })); }
+function healthReadings(v) { return [...capReadings(v).map(c => Object.assign({ src: "own" }, c)), ...dealerReadings(v)].sort((a, b) => byDateOdo(a.e, b.e)); }
+function latestCap(v) { const c = healthReadings(v).filter(x => x.e.date <= todayISO()); return c[c.length - 1] || null; }
+const healthVal = c => c ? (c.pct != null ? nf(c.pct, 0) + "%" : nf(c.cap, 1) + " kWh") : "—";
+const healthSub = c => c ? (c.src === "dealer" ? `dealer check · ${fmtShort(c.e.date)}` : `${nf(c.cap, 1)} kWh est. · ${fmtShort(c.e.date)}`) : "no reading yet";
+function evCardStats(v, st) { return [["kWh/100km", st.kwh100 ? nf(st.kwh100) : "—"], ["Battery", healthVal(latestCap(v))]]; }
 function evTiles(v, st) {
   const c = latestCap(v), out = [];
   out.push(["Energy use", st.kwh100 ? nf(st.kwh100) + " kWh/100" : "—", v.officialKwh100 ? `official ${v.officialKwh100}` : "at the plug"]);
   out.push(["Charging", st.km && st.chargeCost ? money(st.chargeCost / st.km) + "/km" : "—", st.homeEst ? "home part estimated" : st.homeUncosted ? "home not costed" : ""]);
-  out.push(["Battery health", c ? (c.pct != null ? nf(c.pct, 0) + "%" : nf(c.cap, 1) + " kWh") : "—", c ? `${nf(c.cap, 1)} kWh · ${fmtShort(c.e.date)}` : "no reading yet"]);
+  out.push(["Battery health", healthVal(c), healthSub(c)]);
   return out;
 }
 function evStatTiles(v, s) {
-  const c = capReadings(v).filter(x => x.e.date <= todayISO()).pop();
+  const c = latestCap(v);
   return [["Energy use", s.kwh100 ? nf(s.kwh100) + " kWh/100" : "—", v.officialKwh100 ? `official ${v.officialKwh100} · at the plug` : "at the plug"],
     ["Charged", nf(s.kwh, 0) + " kWh", `home ${nf(s.kwhHome, 0)} · public ${nf(s.kwhPublic, 0)}`],
     ["Home cost", s.kwhHome ? (s.costHome ? money(s.costHome / s.kwhHome, 3) + "/kWh" : "not costed") : "—", s.homeEst ? "estimated from your rate" : ""],
     ["Public cost", s.kwhPublic ? money(s.costPublic / s.kwhPublic, 3) + "/kWh" : "—", s.kwhPublic ? money0(s.costPublic) + " total" : ""],
     ["Charging per km", s.km && s.chargeCost ? money(s.chargeCost / s.km) + "/km" : "—", s.homeEst ? "home part estimated" : ""],
-    ["Battery health", c ? (c.pct != null ? nf(c.pct, 0) + "%" : nf(c.cap, 1) + " kWh") : "—", c ? `latest ${fmtShort(c.e.date)}` : "no reading yet"]];
+    ["Battery health", healthVal(c), healthSub(c)]];
 }
 function evCharts(v, from, to, months, mlab) {
   const ch = ownEntries(v).filter(e => e.type === "charge");
   const pts = ch.filter(e => e.where !== "public" && e.date >= from && e.date <= to).map(e => { const p = homePeriod(v, e); return p ? { x: parseISO(e.date).getTime(), y: p.econ, t: `${fmtDate(e.date)}: ${nf(p.econ)} kWh/100km over ${nf(p.km, 0)} km` } : null; }).filter(Boolean);
-  const caps = capReadings(v).filter(c => c.e.date >= from && c.e.date <= to), pc = v.battKwh != null;
-  const cpts = caps.map(c => ({ x: parseISO(c.e.date).getTime(), y: pc ? c.pct : c.cap, hl: c.low, t: `${fmtDate(c.e.date)}: ${nf(c.cap, 1)} kWh${pc ? ` (${nf(c.pct, 0)}%)` : ""}` }));
+  const pc = v.battKwh != null;
+  const hs = healthReadings(v).filter(c => c.e.date >= from && c.e.date <= to && (pc || c.cap != null));
+  const cpts = hs.map(c => ({ x: parseISO(c.e.date).getTime(), y: pc ? c.pct : c.cap, hl: c.low, c: c.src === "dealer" ? "var(--ink)" : null,
+    t: c.src === "dealer" ? `${fmtDate(c.e.date)}: dealer check ${nf(c.pct, 0)}%` : `${fmtDate(c.e.date)}: ${nf(c.cap, 1)} kWh${pc ? ` (${nf(c.pct, 0)}%)` : ""}` }));
   const cost = months.map(m => ch.filter(e => e.date.slice(0, 7) === m).reduce((s, e) => s + costOf(e), 0));
-  const health = caps.length >= 2 ? svgLine(cpts, pc ? { avg: v.batMinPct || null, lo: v.batMinPct ? v.batMinPct - 5 : null, hi: 105, yfmt: x => nf(x, 0) + "%" } : { yfmt: x => nf(x, 0) })
-    : caps.length === 1 ? `<p style="margin:0">One reading so far: <b>${nf(caps[0].cap, 1)} kWh</b>${pc ? ` (${nf(caps[0].pct, 0)}% of ${v.battKwh} kWh)` : ""} on ${fmtDate(caps[0].e.date)}.</p>`
-    : `<p class="muted small" style="margin:0">No readings yet. Log a charge with "Full charge from below 10%" ticked — the handbook asks for one every 3–6 months.</p>`;
+  const one = hs[0];
+  const health = hs.length >= 2 ? svgLine(cpts, pc ? { avg: v.batMinPct || null, lo: v.batMinPct ? v.batMinPct - 5 : null, hi: 105, yfmt: x => nf(x, 0) + "%" } : { yfmt: x => nf(x, 0) })
+    : hs.length === 1 ? `<p style="margin:0">One reading so far: <b>${healthVal(one)}</b>${one.src === "dealer" ? " (dealer check)" : pc ? ` (${nf(one.cap, 1)} kWh of ${v.battKwh} kWh)` : ""} on ${fmtDate(one.e.date)}.</p>`
+    : `<p class="muted small" style="margin:0">No readings yet. Log a charge with "Full charge from below 10%" ticked — the handbook asks for one every 3–6 months — or enter a dealer figure on a service.</p>`;
   return `<div class="panel"><h3>Energy use per home-charging period (kWh/100km)</h3>${svgLine(pts, { avg: v.officialKwh100 || null })}<div class="legend">${v.officialKwh100 ? `<span>– – official ${v.officialKwh100}</span>` : ""}<span>Includes public charges within each period. Measured at the plug.</span></div></div>
-  <div class="panel"><h3>Battery health estimates</h3>${health}${caps.length >= 2 ? `<div class="legend">${pc && v.batMinPct ? `<span>– – warranty minimum ${v.batMinPct}%</span>` : ""}<span><i style="background:var(--amber)"></i>below 10°C (less reliable)</span></div>` : ""}</div>
+  <div class="panel"><h3>Battery health</h3>${health}${hs.length >= 2 ? `<div class="legend"><span><i style="background:var(--accent)"></i>your estimate</span><span><i style="background:var(--ink)"></i>dealer check</span><span><i style="background:var(--amber)"></i>below 10°C</span>${pc && v.batMinPct ? `<span>– – warranty minimum ${v.batMinPct}%</span>` : ""}</div>` : ""}</div>
   <div class="panel"><h3>Charging cost by month</h3>${svgBars(mlab, cost, { yfmt: money0 })}</div>`;
+}
+function reorderList(act) {
+  return `<div class="panel"><h3>Reorder vehicles<span class="sp"></span><button type="button" class="btn primary sm" data-act="reorderOff">Done</button></h3><p class="small muted" style="margin:0">This order is used everywhere — Garage, the vehicle picker when logging, Stats and Reports.</p>
+  <div class="lst">${act.map((v, i) => `<div class="due ok" style="grid-template-columns:minmax(0,1fr) auto;padding:8px 12px"><div style="min-width:0"><b>${i + 1}. ${esc(vName(v))}</b><div class="s">${esc([v.rego, vFull(v)].filter(Boolean).join(" · "))}</div></div><div class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm" data-act="moveV" data-id="${v.id}" data-d="-1" ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(vName(v))} up">▲</button><button type="button" class="btn sm" data-act="moveV" data-id="${v.id}" data-d="1" ${i === act.length - 1 ? "disabled" : ""} aria-label="Move ${esc(vName(v))} down">▼</button></div></div>`).join("")}</div></div>`;
 }
 function evPanel(v) {
   if (!usesCharge(v) || !isActive(v)) return "";
@@ -983,8 +997,10 @@ function evReport(v, mode) {
     return `<tr><td>${esc(w.label)}${w.extra ? `<div class="sm">${esc(w.extra)}</div>` : ""}</td><td>${fmtDate(w.date)}</td><td class="n">${w.km ? nf(w.km, 0) : "Unlimited"}</td><td>${gone ? "Expired" : `${yrsMonths(dl)}${kl != null ? ` / ~${kmf(kl)}` : ""}`}</td></tr>`; }).join("")}</tbody></table><div class="sm">From ${fmtDate(v.warStart)}. Subject to the manufacturer's terms.</div>`;
   if (usesCharge(v)) {
     const [f, t] = periodRange("all", v), s = vStats(v, f, t), caps = capReadings(v);
-    if (s.kwh100 || caps.length) h += `<h2>Battery &amp; energy (owner's records)</h2><div class="big">${s.kwh100 ? `<div><b>${nf(s.kwh100)} kWh/100km</b><span>average at the plug${v.officialKwh100 ? ` · official ${v.officialKwh100}` : ""}</span></div>` : ""}${caps.length ? `<div><b>${caps[caps.length - 1].pct != null ? nf(caps[caps.length - 1].pct, 0) + "%" : nf(caps[caps.length - 1].cap, 1) + " kWh"}</b><span>latest battery estimate</span></div>` : ""}${v.batMinPct ? `<div><b>${v.batMinPct}%</b><span>warranty minimum</span></div>` : ""}</div>
+    if (s.kwh100 || caps.length || dealerReadings(v).length) h += `<h2>Battery &amp; energy (owner's records)</h2><div class="big">${s.kwh100 ? `<div><b>${nf(s.kwh100)} kWh/100km</b><span>average at the plug${v.officialKwh100 ? ` · official ${v.officialKwh100}` : ""}</span></div>` : ""}${caps.length ? `<div><b>${caps[caps.length - 1].pct != null ? nf(caps[caps.length - 1].pct, 0) + "%" : nf(caps[caps.length - 1].cap, 1) + " kWh"}</b><span>latest battery estimate</span></div>` : ""}${v.batMinPct ? `<div><b>${v.batMinPct}%</b><span>warranty minimum</span></div>` : ""}</div>
       ${caps.length ? `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th class="n">Charged</th><th class="n">kWh</th><th class="n">Est. capacity</th><th class="n">Of rated</th></tr></thead><tbody>${caps.map(c => `<tr><td>${fmtDate(c.e.date)}</td><td class="n">${c.e.odo != null ? nf(c.e.odo, 0) : "—"}</td><td class="n">${nf(c.e.socStart, 0)}→${nf(c.e.socEnd, 0)}%</td><td class="n">${nf(c.k, 1)}</td><td class="n">${nf(c.cap, 1)} kWh</td><td class="n">${c.pct != null ? nf(c.pct, 0) + "%" : "—"}${c.low ? " *" : ""}</td></tr>`).join("")}</tbody></table><div class="sm">Owner's estimates from charging records (kWh × charging efficiency ÷ % charged).${caps.some(c => c.low) ? " * Below 10°C, less reliable." : ""} A dealer battery health check is the authoritative figure.</div>` : ""}`;
+    const dl = dealerReadings(v);
+    if (dl.length) h += `<h3 style="font:600 10pt 'Barlow Condensed',Arial,sans-serif;text-transform:uppercase;letter-spacing:.06em;margin:10px 0 2px">Dealer battery health checks</h3><table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Workshop</th><th class="n">State of health</th></tr></thead><tbody>${dl.map(d => `<tr><td>${fmtDate(d.e.date)}</td><td class="n">${d.e.odo != null ? nf(d.e.odo, 0) : "—"}</td><td>${esc(d.e.workshop || "")}</td><td class="n">${nf(d.pct, 0)}%</td></tr>`).join("")}</tbody></table>`;
     if (mode === "own" && s.kwh) {
       const yrs = {}; for (const e of s.ch) { const y = e.date.slice(0, 4), r = yrs[y] = yrs[y] || { kh: 0, kp: 0, ch: 0, cp: 0 }; if (e.where === "public") { r.kp += e.kwh || 0; r.cp += costOf(e); } else { r.kh += e.kwh || 0; r.ch += costOf(e); } }
       h += `<table class="rt" style="margin-top:6px"><thead><tr><th>Year</th><th class="n">Home kWh</th><th class="n">Home $</th><th class="n">Public kWh</th><th class="n">Public $</th></tr></thead><tbody>${Object.keys(yrs).sort().map(y => `<tr><td>${y}</td><td class="n">${nf(yrs[y].kh, 0)}</td><td class="n">${money0(yrs[y].ch)}</td><td class="n">${nf(yrs[y].kp, 0)}</td><td class="n">${money0(yrs[y].cp)}</td></tr>`).join("")}</tbody></table>${s.homeEst ? `<div class="sm">Home charging costs are estimates at the owner's set rate.</div>` : ""}`;
@@ -1045,6 +1061,10 @@ document.addEventListener("click", async ev => {
     case "rsNo": _restore = null; $("#rsConfirm").innerHTML = ""; break;
     case "rtype": S.sheet.o.type = el.dataset.t; drawReport(); break;
     case "printReport": printReport(); break;
+    case "reorderOn": S.reorder = true; render(); break;
+    case "reorderOff": S.reorder = false; render(); toast("Order saved"); break;
+    case "moveV": { const list = sortedV().filter(isActive), i = list.findIndex(x => x.id === id), j = i + (+el.dataset.d); if (i < 0 || j < 0 || j >= list.length) break; [list[i], list[j]] = [list[j], list[i]]; for (let k = 0; k < list.length; k++) if (list[k].order !== k) { const nv = clone(list[k]); nv.order = k; await dbPut("vehicles", nv); } await reload(); render(); break; }
+    case "checkUpdate": { toast("Checking…"); try { const r = await navigator.serviceWorker.getRegistration(); if (r) await r.update(); } catch {} setTimeout(() => location.reload(), 800); break; }
     case "chWhere": readEntryForm(); S.sheet.draft.where = el.dataset.w; if (el.dataset.w === "public" && !S.sheet.draft.current) S.sheet.draft.current = "DC"; S.sheet.warned = null; drawEntry(); break;
     case "chCur": readEntryForm(); S.sheet.draft.current = el.dataset.c; drawEntry(); break;
     case "park": case "unpark": { const nv = clone(vById(id)); if (a === "park") nv.parkedSince = todayISO(); else delete nv.parkedSince; await dbPut("vehicles", nv); await reload(); toast(a === "park" ? "Parked — storage reminders start now" : "Parking reminders cleared"); if (S.sheet && S.sheet.kind === "vehicle") openVehicle(id); else render(); break; }

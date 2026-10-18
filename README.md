@@ -40,10 +40,15 @@ Loads the Kluger, Yaris, Triumph and Trailer with all service, cost and fuel his
 ## Updating from v1
 Make a backup first. Upload the changed files: `app.js`, `index.html`, `sw.js`, `manifest.webmanifest`, `README.md`. Your records are untouched; the Kluger's warranty and hybrid health check are added automatically the first time v2 opens.
 
+## Version 1.3
+- **Reorder vehicles:** Garage → ⇅ Reorder vehicles → ▲ / ▼ → Done.
+- **Dealer battery check:** on an EV service record, enter the dealer's battery state-of-health %. It shows with your own estimates on the vehicle, in Stats and on the sale report.
+- **Version number** at the bottom of More, with **Check for update**.
+
 ## Backups — do this regularly
 More → Backup & restore → **Make backup file** → Save to phone, or Share to Drive / email / your NAS.
 Changing phones: install the app on the new phone, then Restore the latest backup.
 Uninstalling the app or clearing Chrome's site data deletes the records on that phone — the backup file is the safety copy.
 
 ## If you change the app files later
-Edit `sw.js` and change `const VERSION = "gl-v1"` to `"gl-v2"` (and so on), then upload. Your data is not affected.
+Edit `sw.js` and change `const VERSION` to the new version (e.g. `"gl-v1.4"`), and `APP_VERSION` at the top of `app.js` to match, then upload. Your data is not affected. More shows the version you're running, with a **Check for update** button.

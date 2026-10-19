@@ -1,6 +1,6 @@
 "use strict";
 /* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.44";
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.45";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -23,7 +23,7 @@ const S = { vehicles: [], entries: [], meta: {}, tab: "garage", sheet: null, url
 const DEFAULT_SETTINGS = {
   categories: ["Registration", "CTP", "Insurance", "Tyres", "Repairs", "Batteries", "Parts & accessories", "Roadside assist", "Cleaning & detailing", "Tolls", "Parking", "Finance", "Other"],
   dueDays: 30, dueKm: 1000, backupDays: 30, jumpKm: 3000, contact: "",
-  homeRate: null, effAC: 90, effDC: 95, warnDays: 90, noUpdateDays: 35, lowSoonMonths: 3, lowOverMonths: 6,
+  homeRate: null, effAC: 90, effDC: 95, warnDays: 90, noUpdateDays: 35, lowSoonMonths: 3, lowOverMonths: 6, battFirstMonths: 36, battEveryMonths: 12,
   workshops: []
 };
 const SET = () => Object.assign({}, DEFAULT_SETTINGS, S.meta.settings || {});
@@ -74,7 +74,21 @@ const IC = {
 };
 const FUEL_GRADES = ["ULP 91", "E10", "Premium 95", "Premium 98", "Diesel", "Premium diesel", "LPG", "E85"];
 function gradeOptions(cur, allowBlank) { const list = [...FUEL_GRADES]; if (cur && !list.includes(cur)) list.unshift(cur); return (allowBlank || !cur ? `<option value="">—</option>` : "") + list.map(g => `<option ${g === cur ? "selected" : ""}>${esc(g)}</option>`).join(""); }
-const SVC_TYPES = ["Scheduled service", "Safety recall", "Warranty repair", "Repair / other"];
+const SVC_TYPES = ["Scheduled service", "Safety recall", "Warranty repair", "Repair / other", "Battery test"];
+/* 12V battery: fitted date = latest "Batteries" expense or the vehicle's "12V battery fitted" date; first test after 3 years, then yearly */
+const BT = "Battery test", BT_KEYS = ["volts", "cca", "ccaRated", "battResult"];
+const BATT_RESULTS = ["Good", "OK – recharged", "Weak – retest in 3 months", "Replace"];
+const isBT = e => e.type === "service" && e.svcType === BT;
+function battFit(v) { const d = [v.battFitted, ...ownEntries(v).filter(e => e.type === "expense" && e.category === "Batteries").map(e => e.date)].filter(Boolean).sort(); return d.length ? d[d.length - 1] : null; }
+function battTests(v, fit) { return ownEntries(v).filter(e => isBT(e) && (!fit || e.date >= fit)).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0); }
+function battText(e) { const p = []; if (e.volts != null) p.push(`${nf(e.volts, 2)} V`); if (e.cca != null) p.push(`${nf(e.cca, 0)}${e.ccaRated ? "/" + nf(e.ccaRated, 0) : ""} CCA` + (e.cca && e.ccaRated ? ` (${nf(e.cca / e.ccaRated * 100, 0)}%)` : "")); if (e.battResult) p.push(e.battResult); return p.join(" · "); }
+function battDue(v) {
+  if (v.kind === "trailer") return null;
+  const fit = battFit(v); if (!fit) return null;
+  const st = SET(), tests = battTests(v, fit), last = tests[tests.length - 1], res = last && last.battResult || "";
+  const date = !last ? addMonths(fit, st.battFirstMonths) : /^Replace/.test(res) ? last.date : addMonths(last.date, /^Weak/.test(res) ? 3 : st.battEveryMonths);
+  return { fit, last, date, replace: /^Replace/.test(res) };
+}
 const isSched = e => !e.svcType || e.svcType === SVC_TYPES[0]; // only scheduled services restart the service countdown
 const kindIcon = v => IC[v.kind] || IC.other;
 const TYPE_LABEL = { charge: "Charge", fuel: "Fuel", odo: "Odometer", service: "Service", expense: "Expense" };
@@ -309,7 +323,7 @@ function hrow(e, v, fc) {
     s.push(kmf(e.odo)); if (d.dist != null) s.push(`+${nf(d.dist, 0)} km`); if (e.location) s.push(e.location);
     r = e.cost != null ? money(e.cost) : "—"; rs = d.econ != null ? `${nf(d.econ)} L/100${d.tow ? " 🚚" : ""}` : (e.ppl ? `${money(e.ppl, 3)}/L` : "");
     if (d.odd) tags.push(`<span class="tag soon">check</span>`);
-  } else if (e.type === "service") { t = e.desc || (isSched(e) ? "Service" : e.svcType); if (!isSched(e)) tags.push(`<span class="tag acc">${esc(e.svcType)}</span>`); if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; if (e.dealerSoh != null) rs = `🔋 ${nf(e.dealerSoh, 0)}% dealer`; }
+  } else if (e.type === "service") { t = e.desc || (isSched(e) ? "Service" : e.svcType); if (!isSched(e)) tags.push(`<span class="tag acc">${esc(e.svcType)}</span>`); if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; if (e.dealerSoh != null) rs = `🔋 ${nf(e.dealerSoh, 0)}% dealer`; if (isBT(e)) { r = e.cost != null ? money(e.cost) : ""; rs = esc(battText(e)); } }
   else if (e.type === "expense") { t = (e.category || "Expense") + (e.desc ? " — " + e.desc : ""); if (e.odo != null) s.push(kmf(e.odo)); r = e.cost != null ? money(e.cost) : "—"; }
   else if (e.type === "charge") { const cr = capReading(e, v); t = `${nf(e.kwh, 1)} kWh · ${e.where === "public" ? "Public " + (e.current || "DC") : "Home"}`; if (e.odo != null) s.push(kmf(e.odo)); if (e.location) s.push(e.location); r = e.cost != null ? (e.costEst ? "~" : "") + money(e.cost) : "—"; if (cr) rs = `🔋 ${cr.pct != null ? nf(cr.pct, 0) + "%" : nf(cr.cap, 1) + " kWh"}`; }
   else { t = "Odometer " + kmf(e.odo); if (e.notes) s.push(e.notes); }
@@ -343,7 +357,7 @@ const VF = [
   ["fs", "Registration & insurance"], ["regoExpiry", "Rego expiry", "date"], ["ctpInsurer", "CTP insurer"], ["ctpExpiry", "CTP expiry", "date"], ["insurer", "Insurer"], ["policyNo", "Policy no."], ["insExpiry", "Insurance expiry", "date"], ["agreedValue", "Agreed value ($)", "num"],
   ["fs", "Purchase"], ["acqDate", "Date bought", "date"], ["acqFrom", "Bought from"], ["price", "Purchase price ($)", "num"], ["acqOdo", "Odometer when bought (km)", "num"],
   ["financeProvider", "Finance provider"], ["financeMonthly", "Finance per month ($)", "num"], ["financePayout", "Finance payout date", "date"],
-  ["fs", "Servicing"], ["svcKm", "Service every (km)", "num"], ["svcMonths", "or every (months)", "num"],
+  ["fs", "Servicing"], ["svcKm", "Service every (km)", "num"], ["svcMonths", "or every (months)", "num"], ["battFitted", "12V battery fitted (date)", "date", "", "powered"],
   ["tyrePressure", "Tyre pressure", "text", "e.g. 250 kPa"],
   ["fs", "Warranty"], ["warStart", "Warranty start (first registration)", "date"], ["warYears", "Car warranty (years)", "num"], ["warKm", "Car warranty km (blank = unlimited)", "num"],
   ["drvYears", "Engine / drive unit (years)", "num"], ["drvKm", "Engine / drive unit km (blank = unlimited)", "num"],
@@ -360,14 +374,15 @@ function openVehicleEdit(id) {
 function drawVehicleEdit() {
   const d = S.sheet.draft, sold = (d.status || "Active") !== "Active", trailer = d.kind === "trailer";
   const fields = VF.map(([k, l, t = "text", opt, cls]) => {
-    if (cls === "sold" && !sold) return ""; if (cls === "trailer" && !trailer) return ""; if (cls === "ev" && !isEV(d)) return "";
+    if (cls === "sold" && !sold) return ""; if (cls === "trailer" && !trailer) return ""; if (cls === "ev" && !isEV(d)) return ""; if (cls === "powered" && trailer) return "";
     if (k === "fs") return `<div class="fs-title">${l}</div>`;
     const val = getK(d, k);
     if (t === "check") return `<label class="check-inline full"><input type="checkbox" data-k="${k}" ${val !== false && (k !== "tracksFuel" || val) ? "checked" : ""}> ${l}</label>`;
     if (t === "select") return `<div class="field"><label>${l}</label><select data-k="${k}" data-redraw="1">${opt.map(o => `<option value="${esc(o)}" ${String(val ?? "") === o ? "selected" : ""}>${esc(o ? o[0].toUpperCase() + o.slice(1) : "—")}</option>`).join("")}</select></div>`;
     if (t === "grade") return `<div class="field"><label>${l}</label><select data-k="${k}">${gradeOptions(val || "", true)}</select></div>`;
     if (t === "area") return `<div class="field full"><label>${l}</label><textarea data-k="${k}">${esc(val)}</textarea></div>`;
-    return `<div class="field"><label>${l}</label><input data-k="${k}" ${t === "date" ? 'type="date"' : t === "num" ? 'inputmode="decimal" data-num="1"' : 'type="text"'} value="${esc(val ?? "")}" ${opt ? `placeholder="${esc(opt)}"` : ""} ${cls === "mono" ? 'class="mono" autocapitalize="characters"' : ""}></div>`;
+    const hint = k === "battFitted" ? `<span class="hint">Only needed if no "Batteries" expense is logged — e.g. the date bought, if bought new. Starts the 12V battery test reminder.</span>` : "";
+    return `<div class="field"><label>${l}</label><input data-k="${k}" ${t === "date" ? 'type="date"' : t === "num" ? 'inputmode="decimal" data-num="1"' : 'type="text"'} value="${esc(val ?? "")}" ${opt ? `placeholder="${esc(opt)}"` : ""} ${cls === "mono" ? 'class="mono" autocapitalize="characters"' : ""}>${hint}</div>`;
   }).join("");
   openSheet(`${sheetHead(S.sheet.id ? "Edit " + vName(d) : "New vehicle", `<button type="button" class="btn primary sm" data-act="saveVehicle">Save</button>`, S.sheet.id ? "goBack" : "close")}
   <div class="wrap sheet-body">
@@ -429,6 +444,10 @@ function drawEntry() {
     <div class="form2"><div class="field"><label>Servo / location</label><input data-k="location" list="locs" value="${esc(e.location || "")}"><datalist id="locs">${locs.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field"><label>Fuel</label><select data-k="grade">${gradeOptions(e.grade || v.fuelGrade || "")}</select></div></div>`;
   else if (t === "charge") body = chargeBody(e, v, odoField);
   else if (t === "odo") body = odoField;
+  else if (t === "service" && isBT(e)) { const prevT = battTests(v).filter(x => x.id !== e.id).pop(), bf = battFit(v);
+    body = `<div class="field"><label>Type of work</label><select data-k="svcType" data-redraw="1">${SVC_TYPES.map(x => `<option ${x === e.svcType ? "selected" : ""}>${x}</option>`).join("")}</select><span class="hint">12V battery check with your battery tester.${bf ? ` Battery fitted ${fmtDate(bf)}.` : ""}</span></div>${odoField}
+    <div class="form3"><div class="field mid"><label>Voltage (V)</label><input data-k="volts" inputmode="decimal" data-num="1" value="${e.volts ?? ""}" placeholder="e.g. 12.6"></div><div class="field mid"><label>CCA measured</label><input data-k="cca" inputmode="numeric" data-num="1" value="${e.cca ?? ""}"></div><div class="field mid"><label>CCA rated</label><input data-k="ccaRated" inputmode="numeric" data-num="1" value="${e.ccaRated ?? (prevT && prevT.ccaRated) ?? ""}" placeholder="on the label"></div></div>
+    <div class="form2"><div class="field"><label>Result</label><select data-k="battResult"><option value="">—</option>${BATT_RESULTS.map(x => `<option ${x === e.battResult ? "selected" : ""}>${x}</option>`).join("")}</select><span class="hint">Next test: 12 months after "Good", 3 months after "Weak". "Replace" keeps the reminder showing until a new battery is logged.</span></div><div class="field"><label>Tested by</label><input data-k="workshop" list="shops" value="${esc(e.workshop || "")}" placeholder="Home"><datalist id="shops">${shops.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div></div>`; }
   else if (t === "service") body = `<div class="field"><label>Type of work</label><select data-k="svcType" data-redraw="1">${SVC_TYPES.map(x => `<option ${x === (e.svcType || SVC_TYPES[0]) ? "selected" : ""}>${x}</option>`).join("")}</select><span class="hint">${isSched(e) ? "Restarts the service countdown." : "Kept in the history and sale report, but doesn't change when the next service is due."}</span></div>${odoField}${svcItemsChecks(e, v)}<div class="field"><label>What was done</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 48 mth / 60k logbook service"><div class="qchips" style="margin-top:4px">${SVC_CHIPS.map(c => `<button type="button" data-act="svcChip" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>
     ${usesCharge(v) ? `<div class="field" style="max-width:260px"><label>Dealer battery health check (%) — optional</label><input data-k="dealerSoh" inputmode="decimal" data-num="1" value="${e.dealerSoh ?? ""}" placeholder="e.g. 98"><span class="hint">If the dealer gives a battery state-of-health figure at this service.</span></div>` : ""}
     <div class="form2"><div class="field"><label>Workshop</label><input data-k="workshop" list="shops" value="${esc(e.workshop || "")}"><datalist id="shops">${shops.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field mid"><label>Cost $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div>
@@ -437,6 +456,7 @@ function drawEntry() {
   else if (t === "expense") { const cats = st.categories.includes(e.category) || !e.category ? st.categories : [e.category, ...st.categories]; const ren = RENEW[e.category];
     body = `<div class="form2"><div class="field"><label>Category</label><select data-k="category" data-redraw="1"><option value="" disabled ${e.category ? "" : "selected"}>— choose —</option>${cats.map(c => `<option ${c === e.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div><div class="field mid"><label>Amount $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div></div>
     <div class="field"><label>Description</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 4 × Bridgestone tyres"></div>
+    ${e.category === "Batteries" && v.kind !== "trailer" ? `<div class="hint" style="margin-top:-4px">Counts as a new 12V battery fitted on this date — the first battery test will be due ${Math.round(st.battFirstMonths / 12 * 10) / 10} years later.</div>` : ""}
     ${ren && !S.sheet.id ? `<div class="field"><label>New ${ren[1]} date</label><input type="date" data-k="_renew" value="${esc(e._renew ?? addMonths(v[ren[0]] && v[ren[0]] > addMonths(e.date, -6) ? v[ren[0]] : e.date, 12))}"><span class="hint">Updates the vehicle's ${ren[1]} (currently ${v[ren[0]] ? fmtDate(v[ren[0]]) : "not set"}). Clear it to leave unchanged.</span></div>` : ""}
     <div class="form2">${usesOdo(v) ? `<div class="field"><label>Odometer (km) — optional</label><input data-k="odo" inputmode="numeric" value="${e.odo ?? ""}" placeholder="${lr ? Math.round(lr.odo) : ""}"></div>` : ""}<div class="field"><label>Receipt / ref</label><input data-k="ref" value="${esc(e.ref || "")}"></div></div>`; }
   const prevQ = v.acqDate && e.date < v.acqDate;
@@ -501,6 +521,7 @@ async function saveEntry() {
   if (!e.date) { toast("Enter a date"); return; }
   if (e.type === "odo" && e.odo == null) { toast("Enter the odometer reading"); return; }
   if (e.type === "fuel") { if (e.odo == null && usesOdo(v)) { toast("Enter the odometer or trip km"); return; } const q = fuelTrio(e); e.litres = q.l ?? null; e.cost = q.c ?? null; e.ppl = q.p != null ? Math.round(q.p * 10000) / 10000 : null; }
+  if (isBT(e) && !e.desc) e.desc = "12V battery test";
   if (e.type === "service" && !e.desc && e.cost == null && e.odo == null) { toast("Add what was done, the cost or the odometer"); return; }
   if (e.type === "expense" && !e.category) { toast("Choose a category"); $("#sheet [data-k=category]").focus(); return; }
   if (e.type === "expense" && e.cost == null && !e.desc) { toast("Enter an amount or description"); return; }
@@ -522,6 +543,7 @@ async function saveEntry() {
   if (e.type !== "fuel") { delete e.full; delete e.towing; delete e.litres; delete e.ppl; delete e.grade; if (e.type !== "charge") delete e.location; }
   if (e.type !== "service") { delete e.nextKm; delete e.nextDate; delete e.workshop; delete e.invoice; delete e.items; delete e.dealerSoh; delete e.svcType; }
   if (e.type !== "expense") { delete e.category; delete e.ref; }
+  if (!isBT(e)) for (const k of BT_KEYS) delete e[k];
   e.id = e.id || uid("e"); e.created = e.created || Date.now(); e.updated = Date.now();
   await dbPut("entries", e);
   { const pv = vById(e.vehicleId); if (pv && pv.parkedSince) { const nv = clone(pv); delete nv.parkedSince; await dbPut("vehicles", nv); } }
@@ -633,7 +655,7 @@ function viewMore() {
 function viewSettings() {
   const st = SET();
   return `<section class="view">${backMore}<div class="panel"><h3>Expense categories</h3><p class="small muted" style="margin:0">One per line. Registration, CTP and Insurance also offer to update the expiry date when you log them. Renaming a category doesn't change past records.</p><textarea class="csv" id="setCats" style="font-family:var(--f-body);font-size:14px;min-height:240px">${esc(st.categories.join("\n"))}</textarea></div>
-  <div class="panel"><h3>Reminders &amp; checks</h3><div class="form"><div class="field"><label>"Due soon" within (days)</label><input id="setDays" inputmode="numeric" value="${st.dueDays}"></div><div class="field"><label>"Service due soon" within (km)</label><input id="setKm" inputmode="numeric" value="${st.dueKm}"></div><div class="field"><label>Remind me to back up after (days)</label><input id="setBk" inputmode="numeric" value="${st.backupDays}"></div><div class="field"><label>Warn if odometer jumps more than (km)</label><input id="setJump" inputmode="numeric" value="${st.jumpKm}"></div></div></div>
+  <div class="panel"><h3>Reminders &amp; checks</h3><div class="form"><div class="field"><label>"Due soon" within (days)</label><input id="setDays" inputmode="numeric" value="${st.dueDays}"></div><div class="field"><label>"Service due soon" within (km)</label><input id="setKm" inputmode="numeric" value="${st.dueKm}"></div><div class="field"><label>Remind me to back up after (days)</label><input id="setBk" inputmode="numeric" value="${st.backupDays}"></div><div class="field"><label>Warn if odometer jumps more than (km)</label><input id="setJump" inputmode="numeric" value="${st.jumpKm}"></div><div class="field"><label>12V battery: first test after (months)</label><input id="setBat1" inputmode="numeric" value="${st.battFirstMonths}"></div><div class="field"><label>…then test every (months)</label><input id="setBat2" inputmode="numeric" value="${st.battEveryMonths}"></div></div></div>
   <div class="panel"><h3>Electric vehicles</h3><div class="form">
     <div class="field full"><label>Home charging rate ($ per kWh)</label><input id="setRate" inputmode="decimal" value="${st.homeRate ?? ""}" placeholder="blank = don't cost home charging"><span class="hint">One blended figure, e.g. 0.08. With Amber, solar surplus is often worth only cents; grid top-ups cost more. Saved entries keep the rate they were costed at.</span></div>
     <div class="field"><label>Home AC charging efficiency %</label><input id="setEffAC" inputmode="numeric" value="${st.effAC}"></div><div class="field"><label>Public DC charging efficiency %</label><input id="setEffDC" inputmode="numeric" value="${st.effDC}"></div>
@@ -644,7 +666,7 @@ function viewSettings() {
 }
 async function saveSettings() {
   const s = SET(); s.categories = $("#setCats").value.split("\n").map(x => x.trim()).filter(Boolean); s.dueDays = num($("#setDays").value) ?? 30; s.dueKm = num($("#setKm").value) ?? 1000; s.backupDays = num($("#setBk").value) ?? 30; s.jumpKm = num($("#setJump").value) ?? 3000; s.contact = $("#setContact").value.trim();
-  s.homeRate = num($("#setRate").value); s.effAC = num($("#setEffAC").value) ?? 90; s.effDC = num($("#setEffDC").value) ?? 95; s.warnDays = num($("#setWarn").value) ?? 90; s.noUpdateDays = num($("#setNoUpd").value) ?? 35; s.lowSoonMonths = num($("#setLow1").value) ?? 3; s.lowOverMonths = num($("#setLow2").value) ?? 6;
+  s.homeRate = num($("#setRate").value); s.effAC = num($("#setEffAC").value) ?? 90; s.effDC = num($("#setEffDC").value) ?? 95; s.warnDays = num($("#setWarn").value) ?? 90; s.noUpdateDays = num($("#setNoUpd").value) ?? 35; s.lowSoonMonths = num($("#setLow1").value) ?? 3; s.lowOverMonths = num($("#setLow2").value) ?? 6; s.battFirstMonths = num($("#setBat1").value) ?? 36; s.battEveryMonths = num($("#setBat2").value) ?? 12;
   s._t = Date.now(); S.meta.settings = s; await saveMeta(); markDirty(); toast("Settings saved"); render();
 }
 function viewHelp() {
@@ -756,7 +778,7 @@ function buildReport(v, o) {
     <table class="kv">${rRows([["Odometer", usesOdo(v) && odoNow ? `${kmf(odoNow.odo)} (${fmtDate(odoNow.date)})` : ""], ["Registration", [v.rego, v.regoState].filter(Boolean).join(" ")], ["Rego expires", v.regoExpiry && isActive(v) ? fmtDate(v.regoExpiry) : ""], ["VIN", v.vin], ["Engine no.", v.engineNo], ["Tare", v.tareKg ? v.tareKg + " kg" : ""], ["ATM / GVM", v.atmKg ? v.atmKg + " kg" : ""], ["Battery", v.battKwh ? `${v.battKwh} kWh${v.battType ? " " + v.battType : ""}` : ""], ["Owned since", v.acqDate ? fmtDate(v.acqDate) : ""], ["Next service", ns && isActive(v) ? [ns.km && kmf(ns.km), ns.date && fmtDate(ns.date)].filter(Boolean).join(" or ") : ""]])}</table></div>`;
   const svcCostShown = o.type === "own" || o.costs;
   const svcTotal = svc.filter(e => !isPrev(e, v) || o.type === "sale").reduce((s, e) => s + costOf(e), 0);
-  const svcTable = svc.length ? `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Work done</th><th>Workshop</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}${o.type === "own" ? "<th>Invoice</th>" : ""}</tr></thead><tbody>${svc.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc(e.desc || (isSched(e) ? "Service" : e.svcType))}${isSched(e) ? "" : ` <span class="sm">(${esc(e.svcType.toLowerCase())})</span>`}${isPrev(e, v) ? " †" : ""}${e.notes ? `<div class="sm">${esc(e.notes)}</div>` : ""}</td><td>${esc(e.workshop || "")}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}${o.type === "own" ? `<td class="mono sm">${esc(e.invoice || "")}</td>` : ""}</tr>`).join("")}${svcCostShown ? `<tr class="tot"><td colspan="4">${svc.length} services recorded</td><td class="n">${money(svcTotal)}</td>${o.type === "own" ? "<td></td>" : ""}</tr>` : ""}</tbody></table>${svc.some(e => isPrev(e, v)) ? `<div class="sm">† Before ${o.type === "sale" ? "my" : "your"} ownership, from the service book.${o.type === "own" ? " Not included in your costs." : ""}</div>` : ""}` : `<p>No services recorded.</p>`;
+  const svcTable = svc.length ? `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Work done</th><th>Workshop</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}${o.type === "own" ? "<th>Invoice</th>" : ""}</tr></thead><tbody>${svc.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc(e.desc || (isSched(e) ? "Service" : e.svcType))}${isSched(e) ? "" : ` <span class="sm">(${esc(e.svcType.toLowerCase())})</span>`}${isBT(e) && battText(e) ? `<div class="sm">${esc(battText(e))}</div>` : ""}${isPrev(e, v) ? " †" : ""}${e.notes ? `<div class="sm">${esc(e.notes)}</div>` : ""}</td><td>${esc(e.workshop || "")}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}${o.type === "own" ? `<td class="mono sm">${esc(e.invoice || "")}</td>` : ""}</tr>`).join("")}${svcCostShown ? `<tr class="tot"><td colspan="4">${svc.length} services recorded</td><td class="n">${money(svcTotal)}</td>${o.type === "own" ? "<td></td>" : ""}</tr>` : ""}</tbody></table>${svc.some(e => isPrev(e, v)) ? `<div class="sm">† Before ${o.type === "sale" ? "my" : "your"} ownership, from the service book.${o.type === "own" ? " Not included in your costs." : ""}</div>` : ""}` : `<p>No services recorded.</p>`;
   const maintTable = list => `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Item</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}</tr></thead><tbody>${list.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc([e.category, e.desc].filter(Boolean).join(" — "))}${isPrev(e, v) ? " †" : ""}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}</tr>`).join("")}</tbody></table>`;
   const foot = `<div class="rnote">Records kept by the owner in MyGarage. Report generated ${fmtDate(today)}.${o.type === "sale" ? " Invoices and receipts available on request." : ""}</div>`;
   if (o.type === "sale") {
@@ -987,6 +1009,12 @@ function extraReminders(v) {
     out.push({ v, custom: true, kind: "item", label: x.it.name, date: d.sortDate, days: d.days, status: d.status, when: d.status === "over" ? "Overdue" : d.status === "soon" ? "Due soon" : "OK",
       text: `${d.text || "No interval set"}${x.last ? ` · last done ${fmtDate(x.last.date)}` : ""}`, btns: [{ label: "Log it", act: `data-act="logItem" data-id="${v.id}" data-item="${x.it.id}"` }] });
   }
+  { const b = battDue(v);
+    if (b) { const st2 = SET(), dd = daysBetween(today, b.date), status = b.replace || dd < 0 ? "over" : dd <= st2.dueDays ? "soon" : "ok";
+      out.push({ v, custom: true, kind: "batt", label: "12V battery test", date: b.date, days: dd, status, when: b.replace ? "Replace" : status === "over" ? "Overdue" : status === "soon" ? "Due soon" : "OK",
+        text: b.replace ? `Last test ${fmtDate(b.last.date)} said replace (${battText(b.last)}). Log the new battery as a "Batteries" expense.`
+          : `Due ${fmtDate(b.date)} · ${b.last ? `last test ${fmtDate(b.last.date)}: ${battText(b.last) || "no readings"}` : `battery fitted ${fmtDate(b.fit)}`}`,
+        btns: [{ label: "Log test", act: `data-act="logBatt" data-id="${v.id}"` }, ...(b.replace ? [{ label: "New battery", act: `data-act="newBatt" data-id="${v.id}"` }] : [])] }); } }
   if (usesCharge(v)) {
     const lows = ownEntries(v).filter(e => e.type === "charge" && e.lowFull), last = lows[lows.length - 1];
     const base = last ? last.date : (v.acqDate || (vEntries(v.id)[0] || {}).date);
@@ -1376,6 +1404,8 @@ document.addEventListener("click", async ev => {
     case "chWhere": readEntryForm(); S.sheet.draft.where = el.dataset.w; if (el.dataset.w === "public" && !S.sheet.draft.current) S.sheet.draft.current = "DC"; S.sheet.warned = null; drawEntry(); break;
     case "chCur": readEntryForm(); S.sheet.draft.current = el.dataset.c; drawEntry(); break;
     case "park": case "unpark": { const nv = clone(vById(id)); if (a === "park") nv.parkedSince = todayISO(); else delete nv.parkedSince; await dbPut("vehicles", nv); await reload(); toast(a === "park" ? "Parked — storage reminders start now" : "Parking reminders cleared"); if (S.sheet && S.sheet.kind === "vehicle") openVehicle(id); else render(); break; }
+    case "logBatt": openEntry({ vid: id, type: "service", preset: { svcType: BT, desc: "12V battery test" } }); break;
+    case "newBatt": openEntry({ vid: id, type: "expense", preset: { category: "Batteries", desc: "New 12V battery" } }); break;
     case "logLow": openEntry({ vid: id, type: "charge", preset: { where: "home", lowFull: true } }); break;
     case "logItem": { const v = vById(id), it = (v.items || []).find(x => x.id === el.dataset.item); openEntry({ vid: id, type: "service", preset: { items: [el.dataset.item], desc: it ? it.name : "" } }); break; }
     case "preset": { readVehicleForm(); const pr = clone(PRESETS[el.dataset.p]); delete pr._label; pr.items = pr.items.map(x => Object.assign({ id: uid("i") }, x)); const d = S.sheet.draft; for (const [k, val] of Object.entries(pr)) if (blank(d[k]) || k === "items" || typeof val === "boolean" || k === "kind") d[k] = val; drawVehicleEdit(); toast("Preset applied — check the details"); break; }

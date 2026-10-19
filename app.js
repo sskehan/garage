@@ -1,6 +1,6 @@
 "use strict";
 /* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.42";
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.43";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -433,7 +433,7 @@ function drawEntry() {
     <div class="field"><label>Invoice / job no.</label><input data-k="invoice" value="${esc(e.invoice || "")}"></div><div></div>
     <div class="field"><label>Next service due (km)</label><input data-k="nextKm" inputmode="numeric" data-num="1" value="${e.nextKm ?? ""}" placeholder="${v.svcKm ? "auto: +" + v.svcKm.toLocaleString("en-AU") : ""}"></div><div class="field"><label>Next service due (date)</label><input data-k="nextDate" type="date" value="${esc(e.nextDate || "")}"><span class="hint">${v.svcMonths ? `Left blank = ${v.svcMonths} months after the service` : ""}</span></div></div>`;
   else if (t === "expense") { const cats = st.categories.includes(e.category) || !e.category ? st.categories : [e.category, ...st.categories]; const ren = RENEW[e.category];
-    body = `<div class="form2"><div class="field"><label>Category</label><select data-k="category" data-redraw="1">${cats.map(c => `<option ${c === e.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div><div class="field mid"><label>Amount $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div></div>
+    body = `<div class="form2"><div class="field"><label>Category</label><select data-k="category" data-redraw="1"><option value="" disabled ${e.category ? "" : "selected"}>— choose —</option>${cats.map(c => `<option ${c === e.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div><div class="field mid"><label>Amount $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div></div>
     <div class="field"><label>Description</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 4 × Bridgestone tyres"></div>
     ${ren && !S.sheet.id ? `<div class="field"><label>New ${ren[1]} date</label><input type="date" data-k="_renew" value="${esc(e._renew ?? addMonths(v[ren[0]] && v[ren[0]] > addMonths(e.date, -6) ? v[ren[0]] : e.date, 12))}"><span class="hint">Updates the vehicle's ${ren[1]} (currently ${v[ren[0]] ? fmtDate(v[ren[0]]) : "not set"}). Clear it to leave unchanged.</span></div>` : ""}
     <div class="form2">${usesOdo(v) ? `<div class="field"><label>Odometer (km) — optional</label><input data-k="odo" inputmode="numeric" value="${e.odo ?? ""}" placeholder="${lr ? Math.round(lr.odo) : ""}"></div>` : ""}<div class="field"><label>Receipt / ref</label><input data-k="ref" value="${esc(e.ref || "")}"></div></div>`; }
@@ -500,6 +500,7 @@ async function saveEntry() {
   if (e.type === "odo" && e.odo == null) { toast("Enter the odometer reading"); return; }
   if (e.type === "fuel") { if (e.odo == null && usesOdo(v)) { toast("Enter the odometer or trip km"); return; } const q = fuelTrio(e); e.litres = q.l ?? null; e.cost = q.c ?? null; e.ppl = q.p != null ? Math.round(q.p * 10000) / 10000 : null; }
   if (e.type === "service" && !e.desc && e.cost == null && e.odo == null) { toast("Add what was done, the cost or the odometer"); return; }
+  if (e.type === "expense" && !e.category) { toast("Choose a category"); $("#sheet [data-k=category]").focus(); return; }
   if (e.type === "expense" && e.cost == null && !e.desc) { toast("Enter an amount or description"); return; }
   if (e.type === "charge") {
     if (e.kwh == null) { toast("Enter the kWh"); return; }
@@ -1330,7 +1331,7 @@ document.addEventListener("click", async ev => {
     case "newEntry": openEntry({ vid: id, type: el.dataset.type }); break;
     case "editEntry": openEntry({ id }); break;
     case "pickVeh": { readEntryForm(); const d = S.sheet.draft, v = vById(id); d.vehicleId = id; if (!typesFor(v).includes(d.type)) d.type = typesFor(v)[0]; if (d.type === "charge" && !d.where) d.where = "home"; if (d.type === "fuel") d.grade = v.fuelGrade || ""; d.odo = null; S.sheet.warned = null; drawEntry(); break; }
-    case "pickType": readEntryForm(); S.sheet.draft.type = el.dataset.t; if (el.dataset.t === "charge" && !S.sheet.draft.where) S.sheet.draft.where = "home"; if (el.dataset.t === "expense" && !S.sheet.draft.category) S.sheet.draft.category = SET().categories[0]; S.sheet.warned = null; drawEntry(); break;
+    case "pickType": readEntryForm(); S.sheet.draft.type = el.dataset.t; if (el.dataset.t === "charge" && !S.sheet.draft.where) S.sheet.draft.where = "home"; S.sheet.warned = null; drawEntry(); break;
     case "svcChip": { const inp = $("#sheet [data-k=desc]"); inp.value = inp.value ? inp.value.replace(/[,\s]+$/, "") + ", " + el.dataset.c.toLowerCase() : el.dataset.c; break; }
     case "saveEntry": saveEntry(); break;
     case "delEntry": readEntryForm(); S.sheet.confirmDel = true; drawEntry(); break;
@@ -1391,7 +1392,7 @@ document.addEventListener("input", ev => {
 document.addEventListener("change", async ev => {
   const t = ev.target;
   if (t.id === "restoreIn") { const f = t.files[0]; t.value = ""; if (f) readRestore(f); return; }
-  if (t.id === "photoIn") { const f = t.files[0]; t.value = ""; if (!f) return; const blob = await resizeImage(f, 1600); const fid = uid("f"); await dbPut("files", { id: fid, blob, type: "image/jpeg", name: f.name }); S.sheet.draft.photo = fid; drawVehicleEdit(); return; }
+  if (t.id === "photoIn") { const f = t.files[0]; t.value = ""; if (!f || !S.sheet || S.sheet.kind !== "editVehicle") return; readVehicleForm(); const blob = await resizeImage(f, 1600); const fid = uid("f"); await dbPut("files", { id: fid, blob, type: "image/jpeg", name: f.name }); S.sheet.draft.photo = fid; drawVehicleEdit(); return; }
   if (t.id === "receiptIn") { const fs = [...t.files]; t.value = ""; if (fs.length) addReceipts(fs); return; }
   if (!S.sheet) return;
   if (t.dataset.redraw && S.sheet.kind === "editVehicle") { readVehicleForm(); drawVehicleEdit(); }

@@ -1,6 +1,6 @@
 "use strict";
 /* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.41";
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.42";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -72,6 +72,8 @@ const IC = {
   trailer: `<svg viewBox="0 0 48 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 10h30v11H6z"/><circle cx="20" cy="24" r="4"/><path d="M36 18h9M45 18v3"/></svg>`,
   other: `<svg viewBox="0 0 48 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 8h36v14H6z"/><circle cx="14" cy="24" r="3"/><circle cx="34" cy="24" r="3"/></svg>`
 };
+const FUEL_GRADES = ["ULP 91", "E10", "Premium 95", "Premium 98", "Diesel", "Premium diesel", "LPG", "E85"];
+function gradeOptions(cur, allowBlank) { const list = [...FUEL_GRADES]; if (cur && !list.includes(cur)) list.unshift(cur); return (allowBlank || !cur ? `<option value="">—</option>` : "") + list.map(g => `<option ${g === cur ? "selected" : ""}>${esc(g)}</option>`).join(""); }
 const kindIcon = v => IC[v.kind] || IC.other;
 const TYPE_LABEL = { charge: "Charge", fuel: "Fuel", odo: "Odometer", service: "Service", expense: "Expense" };
 
@@ -332,7 +334,7 @@ function detailPanel(v) {
 const VF = [
   ["fs", "Basics"], ["name", "Short name (shown in the app)", "text", "e.g. Kluger"], ["kind", "Type", "select", ["car", "motorcycle", "trailer", "other"]],
   ["rego", "Number plate"], ["regoState", "State", "text", "NSW"], ["year", "Year", "num"], ["make", "Make"], ["model", "Model"], ["variant", "Variant / grade"], ["body", "Body type"], ["colour", "Colour"], ["transmission", "Transmission"], ["engine", "Engine (e.g. 2.5 L)"],
-  ["powertrain", "Powertrain", "select", ["", "Petrol", "Petrol hybrid", "Plug-in hybrid", "Diesel", "Electric", "None (trailer)"]], ["fuelGrade", "Usual fuel", "text", "e.g. Premium 95"], ["tankL", "Tank size (litres)", "num"],
+  ["powertrain", "Powertrain", "select", ["", "Petrol", "Petrol hybrid", "Plug-in hybrid", "Diesel", "Electric", "None (trailer)"]], ["fuelGrade", "Usual fuel", "grade"], ["tankL", "Tank size (litres)", "num"],
   ["fs", "What to track"], ["tracksOdo", "Record odometer (km)", "check"], ["tracksFuel", "Record fuel fill-ups & economy", "check"],
   ["fs", "Electric vehicle", "", "", "ev"], ["battKwh", "Battery size (kWh)", "num", "", "ev"], ["battType", "Battery type", "text", "e.g. LFP", "ev"], ["officialKwh100", "Official energy use (kWh/100km)", "num", "", "ev"],
   ["fs", "Identification"], ["vin", "VIN / chassis no.", "text", "", "mono"], ["engineNo", "Engine no.", "text", "", "mono"], ["tareKg", "Tare (kg)", "num", "", "trailer"], ["atmKg", "ATM / GVM (kg)", "num", "", "trailer"], ["axles", "Axles", "text", "", "trailer"],
@@ -361,6 +363,7 @@ function drawVehicleEdit() {
     const val = getK(d, k);
     if (t === "check") return `<label class="check-inline full"><input type="checkbox" data-k="${k}" ${val !== false && (k !== "tracksFuel" || val) ? "checked" : ""}> ${l}</label>`;
     if (t === "select") return `<div class="field"><label>${l}</label><select data-k="${k}" data-redraw="1">${opt.map(o => `<option value="${esc(o)}" ${String(val ?? "") === o ? "selected" : ""}>${esc(o ? o[0].toUpperCase() + o.slice(1) : "—")}</option>`).join("")}</select></div>`;
+    if (t === "grade") return `<div class="field"><label>${l}</label><select data-k="${k}">${gradeOptions(val || "", true)}</select></div>`;
     if (t === "area") return `<div class="field full"><label>${l}</label><textarea data-k="${k}">${esc(val)}</textarea></div>`;
     return `<div class="field"><label>${l}</label><input data-k="${k}" ${t === "date" ? 'type="date"' : t === "num" ? 'inputmode="decimal" data-num="1"' : 'type="text"'} value="${esc(val ?? "")}" ${opt ? `placeholder="${esc(opt)}"` : ""} ${cls === "mono" ? 'class="mono" autocapitalize="characters"' : ""}></div>`;
   }).join("");
@@ -421,7 +424,7 @@ function drawEntry() {
   if (t === "fuel") body = `<div class="form2">${odoField}<div class="field bigodo"><label for="fTrip">or Trip km since last fill</label><input id="fTrip" data-k="_trip" inputmode="numeric" pattern="[0-9]*" placeholder="${pf ? "e.g. 520" : "—"}" ${pf ? "" : "disabled"}><span class="hint">${pf ? `Last fill at ${kmf(pf.odo)}` : "Needs an earlier fill"}</span></div></div>
     <div class="form3"><div class="field mid"><label>Litres</label><input data-k="litres" inputmode="decimal" data-num="1" value="${e.litres ?? ""}"></div><div class="field mid"><label>Total $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div><div class="field mid"><label>$ per litre</label><input data-k="ppl" inputmode="decimal" data-num="1" value="${e.ppl != null ? r2(e.ppl * 1000) / 1000 : ""}" placeholder="auto"></div></div>
     <div class="toggles"><label class="check-inline"><input type="checkbox" data-k="full" ${e.full !== false ? "checked" : ""}> Filled to full</label><label class="check-inline"><input type="checkbox" data-k="towing" ${e.towing ? "checked" : ""}> Towing since last fill</label></div>
-    <div class="form2"><div class="field"><label>Servo / location</label><input data-k="location" list="locs" value="${esc(e.location || "")}"><datalist id="locs">${locs.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field"><label>Fuel</label><input data-k="grade" list="grades" value="${esc(e.grade || "")}"><datalist id="grades">${["ULP 91", "E10", "Premium 95", "Premium 98", "Diesel"].map(g => `<option value="${g}">`).join("")}</datalist></div></div>`;
+    <div class="form2"><div class="field"><label>Servo / location</label><input data-k="location" list="locs" value="${esc(e.location || "")}"><datalist id="locs">${locs.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field"><label>Fuel</label><select data-k="grade">${gradeOptions(e.grade || v.fuelGrade || "")}</select></div></div>`;
   else if (t === "charge") body = chargeBody(e, v, odoField);
   else if (t === "odo") body = odoField;
   else if (t === "service") body = `${odoField}${svcItemsChecks(e, v)}<div class="field"><label>What was done</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 48 mth / 60k logbook service"><div class="qchips" style="margin-top:4px">${SVC_CHIPS.map(c => `<button type="button" data-act="svcChip" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>

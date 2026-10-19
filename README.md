@@ -1,4 +1,4 @@
-# MyGarage — vehicle records app (version 1.41)
+# MyGarage — vehicle records app (version 1.42)
 
 Fuel, kilometres, charging, servicing, costs, warranty, reminders and sale reports for every vehicle.
 Runs on your phone, works offline, and keeps a live backup in your own Dropbox.
@@ -60,6 +60,7 @@ When clearing Chrome's history, untick **Cookies and site data** — ticking it 
 Your data is not affected. When a file changes, `APP_VERSION` at the top of `app.js` and `VERSION` in `sw.js` change together.
 
 ## Version history
+- **1.42** — Fuel type is a proper dropdown when logging fuel and editing a vehicle.
 - **1.41** — Two phones: records merged automatically; Dropbox App key built in.
 - **1.4** — Dropbox live backup with daily snapshots and two-phone handling; renamed MyGarage.
 - **1.3** — Reorder vehicles; dealer battery health checks; version number and Check for update.

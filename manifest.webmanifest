@@ -1,6 +1,6 @@
 {
-  "name": "Garage Log",
-  "short_name": "Garage",
+  "name": "MyGarage",
+  "short_name": "MyGarage",
   "description": "Vehicle records: fuel, km, servicing, costs, reminders and sale reports. Works offline; data stays on the device.",
   "start_url": "./",
   "scope": "./",

@@ -1,6 +1,6 @@
 "use strict";
-/* Garage Log — offline vehicle records. All data lives on this device (IndexedDB). */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.3";
+/* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.41";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -11,9 +11,11 @@ function openDB() { return new Promise((res, rej) => { const r = indexedDB.open(
 function tx(store, mode, fn) { return new Promise((res, rej) => { const t = _db.transaction(store, mode); const os = t.objectStore(store); let out; const r = fn(os); if (r) r.onsuccess = () => { out = r.result; }; t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); }
 const dbAll = s => tx(s, "readonly", os => os.getAll());
 const dbGet = (s, id) => tx(s, "readonly", os => os.get(id));
-const dbPut = (s, o) => tx(s, "readwrite", os => os.put(o));
-const dbDel = (s, id) => tx(s, "readwrite", os => os.delete(id));
-const dbClear = s => tx(s, "readwrite", os => os.clear());
+const DATA_STORES = ["vehicles", "entries", "files"]; // changes to these are sent to Dropbox
+const dirtyAfter = s => r => { if (DATA_STORES.includes(s)) markDirty(); return r; };
+const dbPut = (s, o) => { if (!_quiet && o && (s === "vehicles" || s === "entries")) o._t = Date.now(); return tx(s, "readwrite", os => os.put(o)).then(dirtyAfter(s)); }; // _t = when this record last changed (for merging two phones)
+const dbDel = (s, id) => { if (!_quiet && DATA_STORES.includes(s)) { S.meta.tomb = S.meta.tomb || {}; S.meta.tomb[id] = Date.now(); } return tx(s, "readwrite", os => os.delete(id)).then(dirtyAfter(s)); };
+const dbClear = s => tx(s, "readwrite", os => os.clear()).then(dirtyAfter(s));
 const uid = p => (p || "x") + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 /* ================= state & helpers ================= */
@@ -202,7 +204,7 @@ function render() {
   _fcache.clear();
   $$("nav.tabs [data-tab]").forEach(b => b.setAttribute("aria-current", b.dataset.tab === S.tab ? "page" : "false"));
   const act = S.vehicles.filter(isActive);
-  $("#hdrsub").textContent = `${act.length} vehicle${act.length === 1 ? "" : "s"}` + (S.vehicles.length > act.length ? ` · ${S.vehicles.length - act.length} sold` : "");
+  paintStatus();
   const rem = allReminders(), over = rem.filter(r => r.status === "over").length, soon = rem.filter(r => r.status === "soon").length;
   const b = $("#dueBadge"); b.hidden = !(over || soon); b.textContent = over || soon; b.className = "badge" + (over ? "" : " soon");
   $("#addVehBtn").hidden = S.tab !== "garage";
@@ -215,12 +217,18 @@ async function hydrateImages(root) { for (const im of $$("img[data-fid]", root))
 
 /* ================= garage ================= */
 function backupBanner() {
+  if (dbxOn()) {
+    const m = S.meta, waitDays = m.dirty && m.lastSync ? (Date.now() - m.lastSync) / 864e5 : 0;
+    const msg = m.conflict ? "Dropbox has a different copy from this phone. Choose which one to keep." : m.syncError ? `Dropbox sync didn't work: ${m.syncError}` : waitDays >= 2 ? `${m.changes || 1} change${(m.changes || 1) === 1 ? "" : "s"} waiting to go to Dropbox since ${fmtWhen(m.lastSync)}.` : "";
+    return msg ? `<div class="banner ${m.conflict || m.syncError ? "bad" : ""}"><span>${esc(msg)}</span><button type="button" class="btn sm primary" data-act="goBackup">Open</button></div>` : "";
+  }
+  if (hasData()) return `<div class="banner"><span>Your records live only on this phone. Connect Dropbox so they're kept safe automatically.</span><button type="button" class="btn sm primary" data-act="goBackup">Connect Dropbox</button></div>`;
   const last = S.meta.lastBackup, days = last ? daysBetween(last.slice(0, 10), todayISO()) : null;
   if (!S.entries.length || (last && days < SET().backupDays)) return "";
   return `<div class="banner"><span>${last ? `Last backup was ${days} days ago.` : "No backup made on this phone yet."} A backup file protects your records if the phone is lost or replaced.</span><button type="button" class="btn sm primary" data-act="goBackup">Back up now</button></div>`;
 }
 function viewGarage() {
-  if (!S.vehicles.length) return `<section class="view"><div class="empty"><b>No vehicles yet</b><span>Add your first vehicle, or restore a backup file (More → Backup &amp; restore).</span><div class="row"><button class="btn primary" type="button" data-act="newVehicle">+ Add vehicle</button><button class="btn" type="button" data-act="pickRestore">Restore backup…</button></div></div></section>`;
+  if (!S.vehicles.length) return `<section class="view"><div class="empty"><b>No vehicles on this phone yet</b><span>${dbxOn() ? "Connected to Dropbox, but there are no vehicles there yet." : "Used MyGarage with Dropbox before? Connect it and everything comes back."} Or add your first vehicle, or restore a backup file.</span><div class="row">${dbxOn() ? "" : `<button class="btn primary" type="button" data-act="dbxConnect">Get my vehicles from Dropbox</button>`}<button class="btn primary" type="button" data-act="newVehicle">+ Add vehicle</button><button class="btn" type="button" data-act="pickRestore">Restore backup…</button></div></div></section>`;
   const act = sortedV().filter(isActive);
   const sold = S.vehicles.filter(v => !isActive(v));
   const rem = allReminders().filter(r => r.status !== "ok");
@@ -606,13 +614,13 @@ function viewMore() {
   if (mv === "backup") return viewBackup(); if (mv === "settings") return viewSettings(); if (mv === "export") return viewExport(); if (mv === "help") return viewHelp(); if (mv === "reports") return viewReportPick();
   return `<section class="view">${backupBanner()}<div class="menu">
     <button type="button" data-act="moreGo" data-v="reports"><b>Reports</b><span class="small muted">Sale report for buyers, full ownership report — print or save as PDF</span></button>
-    <button type="button" data-act="moreGo" data-v="backup"><b>Backup &amp; restore</b><span class="small muted">${S.meta.lastBackup ? "Last backup " + fmtDate(S.meta.lastBackup.slice(0, 10)) : "Not backed up yet"}</span></button>
+    <button type="button" data-act="moreGo" data-v="backup"><b>Backup &amp; restore</b><span class="small muted">${dbxOn() ? "Kept in Dropbox · " + esc(syncText().t) : S.meta.lastBackup ? "Last backup " + fmtDate(S.meta.lastBackup.slice(0, 10)) : "Not backed up yet"}</span></button>
     <button type="button" data-act="moreGo" data-v="export"><b>Export to Excel (CSV)</b><span class="small muted">Every record as a spreadsheet</span></button>
     <button type="button" data-act="moreGo" data-v="settings"><b>Settings</b><span class="small muted">Expense categories, reminder windows</span></button>
     <button type="button" data-act="newVehicle"><b>Add a vehicle</b><span class="small muted">Car, motorbike, trailer…</span></button>
     <button type="button" data-act="moreGo" data-v="help"><b>How it works</b><span class="small muted">Economy maths, reminders, storage</span></button>
   </div>
-  <div class="row small muted"><span>Garage Log version <b>${APP_VERSION}</b></span><span class="sp"></span><button type="button" class="btn sm ghost" data-act="checkUpdate">Check for update</button></div></section>`;
+  <div class="row small muted"><span>MyGarage version <b>${APP_VERSION}</b></span><span class="sp"></span><button type="button" class="btn sm ghost" data-act="checkUpdate">Check for update</button></div></section>`;
 }
 function viewSettings() {
   const st = SET();
@@ -629,7 +637,7 @@ function viewSettings() {
 async function saveSettings() {
   const s = SET(); s.categories = $("#setCats").value.split("\n").map(x => x.trim()).filter(Boolean); s.dueDays = num($("#setDays").value) ?? 30; s.dueKm = num($("#setKm").value) ?? 1000; s.backupDays = num($("#setBk").value) ?? 30; s.jumpKm = num($("#setJump").value) ?? 3000; s.contact = $("#setContact").value.trim();
   s.homeRate = num($("#setRate").value); s.effAC = num($("#setEffAC").value) ?? 90; s.effDC = num($("#setEffDC").value) ?? 95; s.warnDays = num($("#setWarn").value) ?? 90; s.noUpdateDays = num($("#setNoUpd").value) ?? 35; s.lowSoonMonths = num($("#setLow1").value) ?? 3; s.lowOverMonths = num($("#setLow2").value) ?? 6;
-  S.meta.settings = s; await saveMeta(); toast("Settings saved"); render();
+  s._t = Date.now(); S.meta.settings = s; await saveMeta(); markDirty(); toast("Settings saved"); render();
 }
 function viewHelp() {
   return `<section class="view">${backMore}<div class="panel help"><h3>How it works</h3>
@@ -644,16 +652,17 @@ function viewHelp() {
   <p>Tap <b>Parked from today</b> on the vehicle when it'll sit unused; the 7-day and 3-month reminders run from then and it clears itself when you next log anything. If nothing at all is logged for ${SET().noUpdateDays} days you'll get a reminder too.</p>
   <h4>Warranty</h4><p>Enter the start date (first registration) and years/km on the vehicle. The Due tab warns ${SET().warnDays} days before a warranty ends, or when your average driving will reach its km limit within that time. Expired cover shows on the vehicle page only.</p>
   <h4>Scheduled items</h4><p>For work not done at every service (brake fluid, coolant, the Kluger's hybrid health check), add items on the vehicle (Edit → Service items). Tick them when you log a service; each tracks its own next due date and km.</p>
-  <h4>Where your data is</h4><p>Only on this phone, in Chrome's storage for this app. Nothing is uploaded. Clearing Chrome's site data or uninstalling deletes it — the backup file is your safety copy.</p></div></section>`;
+  <h4>Where your data is</h4><p>On this phone, in Chrome's storage for this app — and, once connected, in your own Dropbox (Apps › MyGarage), updated within seconds of every change with a snapshot each day. New phone or cleared Chrome: tap <b>Get my vehicles from Dropbox</b>. Nothing is sent anywhere else. Clearing Chrome's <b>Cookies and site data</b> (or uninstalling Chrome) deletes the copy on this phone — Dropbox, or a backup file, is how it comes back.</p></div></section>`;
 }
 /* backup */
 function viewBackup() {
   const last = S.meta.lastBackup;
   return `<section class="view">${backMore}
-  <div class="panel"><h3>Back up</h3><p style="margin:0">Makes one .zip file with every vehicle, record, photo and receipt. Save it to Google Drive or your NAS, or email it to yourself.</p>
+  ${dropboxPanel()}
+  <div class="panel"><h3>Backup file</h3><p style="margin:0">Makes one .zip file with every vehicle, record, photo and receipt${dbxOn() ? " — an extra copy you can keep anywhere, e.g. on the QNAP" : ". Save it to Dropbox, Google Drive or the QNAP, or email it to yourself"}.</p>
     <div class="muted small">${last ? `Last backup: ${fmtDate(last.slice(0, 10))}` : "No backup made on this phone yet."}</div>
     <div class="row"><button type="button" class="btn primary" data-act="makeBackup">Make backup file</button><span class="muted small" id="bkStat"></span></div><div id="bkOut" class="row"></div></div>
-  <div class="panel"><h3>Restore</h3><p style="margin:0">Loads a backup file onto this phone. It <b>replaces</b> everything currently in the app. Use it on a new phone, or to undo mistakes.</p>
+  <div class="panel"><h3>Restore from a file</h3><p style="margin:0">Loads a backup file onto this phone. It <b>replaces</b> everything currently in the app.${dbxOn() ? " A snapshot of what's here now is saved to Dropbox first." : ""}</p>
     <div class="row"><button type="button" class="btn" data-act="pickRestore">Choose backup file…</button><span class="muted small" id="rsStat"></span></div><div id="rsConfirm"></div></div>
   <div class="panel"><h3>Storage</h3><dl class="kv" id="storeInfo"></dl></div></section>`;
 }
@@ -665,7 +674,7 @@ async function makeBackup() {
   const data = { app: APP_ID, version: BACKUP_VERSION, appVersion: APP_VERSION, exportedAt: new Date().toISOString(), settings: S.meta.settings || null, vehicles: S.vehicles, entries: S.entries, files: manifest };
   zip.file("backup.json", JSON.stringify(data, null, 1));
   const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
-  const name = `garage-backup-${todayISO()}.zip`; _backup = { blob, name };
+  const name = `mygarage-backup-${todayISO()}.zip`; _backup = { blob, name };
   const url = URL.createObjectURL(blob); const file = new File([blob], name, { type: "application/zip" });
   const canShare = navigator.canShare && navigator.canShare({ files: [file] });
   $("#bkOut").innerHTML = `<a class="btn primary" href="${url}" download="${esc(name)}" data-act="dlBackup">Save to phone</a>${canShare ? `<button type="button" class="btn" data-act="shareBackup">Share to Drive / email…</button>` : ""}<span class="muted small">${(blob.size / 1048576).toFixed(2)} MB · ${S.vehicles.length} vehicles · ${S.entries.length} records · ${files.length} files</span>`;
@@ -674,7 +683,7 @@ async function makeBackup() {
 async function readRestore(file) {
   const st = $("#rsStat") || {}; st.textContent = "Reading…";
   try {
-    const zip = await JSZip.loadAsync(file); const j = zip.file("backup.json"); if (!j) throw new Error("This isn't a Garage Log backup (no backup.json inside).");
+    const zip = await JSZip.loadAsync(file); const j = zip.file("backup.json"); if (!j) throw new Error("This isn't a MyGarage backup (no backup.json inside).");
     const data = JSON.parse(await j.async("string")); if (data.app !== APP_ID) throw new Error("This file is from a different app.");
     _restore = { zip, data };
     if (S.tab !== "more" || S.moreView !== "backup") { closeSheet(); S.tab = "more"; S.moreView = "backup"; render(); }
@@ -684,14 +693,18 @@ async function readRestore(file) {
 }
 async function doRestore() {
   const { zip, data } = _restore; const st = $("#rsStat"); st.textContent = "Restoring…";
+  if (!(await snapshotBeforeReplace())) { st.textContent = ""; return; }
+  _quiet++;
+  try {
   for (const s of ["vehicles", "entries", "files"]) await dbClear(s);
   for (const u of Object.values(S.urls)) URL.revokeObjectURL(u); S.urls = {};
   let n = 0; for (const f of data.files) { const z = zip.file(f.path); if (!z) continue; const b = await z.async("blob"); await dbPut("files", { id: f.id, type: f.type, name: f.name, blob: new Blob([b], { type: f.type }) }); if (++n % 10 === 0) st.textContent = `Restoring files ${n} of ${data.files.length}…`; }
   for (const v of data.vehicles) await dbPut("vehicles", v); for (const e of data.entries) await dbPut("entries", e);
-  if (data.settings) S.meta.settings = data.settings; S.meta.lastBackup = data.exportedAt; await saveMeta();
+  } finally { _quiet--; }
+  if (data.settings) S.meta.settings = data.settings; S.meta.lastBackup = data.exportedAt; S.meta.conflict = null; S.meta.tomb = {}; S.meta.gen = uid("g"); S.meta.genPending = true; await saveMeta(); markDirty();
   _restore = null; await reload(); await migrateData(); askPersist(); S.tab = "garage"; S.moreView = null; render(); toast(`Restored ${data.vehicles.length} vehicles, ${data.entries.length} records`);
 }
-async function saveMeta() { await dbPut("meta", { id: "main", ...S.meta }); }
+async function saveMeta() { S.meta.stamp = Date.now(); await dbPut("meta", { id: "main", ...S.meta }); }
 async function fillStoreInfo() { const el = $("#storeInfo"); if (!el) return; let used = "Unknown", prot = "Unknown"; try { const e = await navigator.storage.estimate(); used = (e.usage / 1048576).toFixed(1) + " MB"; } catch {} try { prot = (await navigator.storage.persisted()) ? "Yes — Chrome won't clear it to save space" : "Not yet — requested when you save"; } catch {} el.innerHTML = `<dt>Storage used</dt><dd>${used}</dd><dt>Protected storage</dt><dd>${prot}</dd>`; }
 async function askPersist() { try { if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) await navigator.storage.persist(); } catch {} }
 /* CSV */
@@ -737,7 +750,7 @@ function buildReport(v, o) {
   const svcTotal = svc.filter(e => !isPrev(e, v) || o.type === "sale").reduce((s, e) => s + costOf(e), 0);
   const svcTable = svc.length ? `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Work done</th><th>Workshop</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}${o.type === "own" ? "<th>Invoice</th>" : ""}</tr></thead><tbody>${svc.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc(e.desc || "Service")}${isPrev(e, v) ? " †" : ""}${e.notes ? `<div class="sm">${esc(e.notes)}</div>` : ""}</td><td>${esc(e.workshop || "")}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}${o.type === "own" ? `<td class="mono sm">${esc(e.invoice || "")}</td>` : ""}</tr>`).join("")}${svcCostShown ? `<tr class="tot"><td colspan="4">${svc.length} services recorded</td><td class="n">${money(svcTotal)}</td>${o.type === "own" ? "<td></td>" : ""}</tr>` : ""}</tbody></table>${svc.some(e => isPrev(e, v)) ? `<div class="sm">† Before ${o.type === "sale" ? "my" : "your"} ownership, from the service book.${o.type === "own" ? " Not included in your costs." : ""}</div>` : ""}` : `<p>No services recorded.</p>`;
   const maintTable = list => `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Item</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}</tr></thead><tbody>${list.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc([e.category, e.desc].filter(Boolean).join(" — "))}${isPrev(e, v) ? " †" : ""}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}</tr>`).join("")}</tbody></table>`;
-  const foot = `<div class="rnote">Records kept by the owner in Garage Log. Report generated ${fmtDate(today)}.${o.type === "sale" ? " Invoices and receipts available on request." : ""}</div>`;
+  const foot = `<div class="rnote">Records kept by the owner in MyGarage. Report generated ${fmtDate(today)}.${o.type === "sale" ? " Invoices and receipts available on request." : ""}</div>`;
   if (o.type === "sale") {
     const fuel = o.fuel && usesFuel(v) && st.econNoTow ? `<h2>Fuel economy (owner's records)</h2><div class="big"><div><b>${nf(st.econNoTow.econ)} L/100km</b><span>average, ${kmf(st.econNoTow.km)} recorded</span></div>${st.econTow ? `<div><b>${nf(st.econTow.econ)} L/100km</b><span>while towing</span></div>` : ""}<div><b>${st.fuel.length}</b><span>fill-ups logged</span></div></div>` : "";
     return css + `<div class="rpt">${head}${photo}${details}<h2>Service history</h2>${svcTable}${o.maint && maint.length ? `<h2>Repairs, tyres &amp; batteries</h2>${maintTable(maint)}` : ""}${fuel}${evReport(v, "sale")}${v.sellerNotes ? `<h2>Seller's notes</h2><div class="note">${esc(v.sellerNotes)}</div>` : ""}${o.contact && SET().contact ? `<p style="margin-top:10px"><b>Contact:</b> ${esc(SET().contact)}</p>` : ""}${foot}</div>`;
@@ -1011,6 +1024,284 @@ function evReport(v, mode) {
   return h;
 }
 
+/* ================= Dropbox: live copy + daily snapshots (same approach as Next Up, with photos like MyMaglites) =================
+   Dropbox › Apps › MyGarage
+     live/mygarage.json          vehicles, records and settings — sent a few seconds after every change
+     live/files/<id>.<ext>       photos and receipts, each sent once
+     snapshots/mygarage-*.json   one per day, plus one before every restore (kept 60 days)            */
+const DBX_APP_KEY = "phvq3v06n9q3l18"; // public App key for the MyGarage Dropbox app (the App secret is never used)
+const DBX_TOKEN = "https://api.dropboxapi.com/oauth2/token";
+const DBX_REDIRECT = location.origin + location.pathname.replace(/index\.html$/, "");
+const LIVE = "/live/mygarage.json";
+let syncing = false, syncT = null, retryT = null, lastCheck = 0, _quiet = 0;
+const appKey = () => DBX_APP_KEY || S.meta.dbxKey || "";
+const dbxOn = () => !!(S.meta.dbx && S.meta.dbx.refresh);
+const hasData = () => S.vehicles.length > 0 || S.entries.length > 0;
+const ownerName = () => "phone set up " + fmtDate(S.meta.created || todayISO());
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+class DbxErr extends Error { constructor(m, s, sum) { super(m); this.status = s; this.summary = sum || ""; } }
+const dbxArg = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const cap = t => t ? t[0].toUpperCase() + t.slice(1) : t;
+const fmtWhen = s => { if (!s) return "never"; const d = new Date(s); if (isNaN(d)) return "—"; const t = d.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }); return (isoOf(d) === todayISO() ? "today" : fmtDate(isoOf(d))) + ", " + t; };
+const fileExt = f => (f.type === "image/jpeg" ? "jpg" : f.type === "image/png" ? "png" : f.type === "application/pdf" ? "pdf" : (String(f.name || "").split(".").pop() || "bin")).toLowerCase().replace(/[^a-z0-9]/g, "") || "bin";
+const filePath = f => `/live/files/${f.id}.${fileExt(f)}`;
+const notFound = e => e instanceof DbxErr && e.status === 409 && /not_found/.test(e.summary);
+function snapName(kind) { const d = new Date(); return `/snapshots/mygarage-${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}${kind ? "-" + p2(d.getHours()) + p2(d.getMinutes()) + "-" + kind : ""}.json`; }
+
+/* every change to vehicles, records, photos or settings marks the data as waiting for Dropbox */
+function markDirty() { if (_quiet) return; S.meta.dirty = true; S.meta.changes = (S.meta.changes || 0) + 1; S.meta.seq = (S.meta.seq || 0) + 1; saveMeta().catch(() => {}); scheduleSync(); paintStatus(); }
+function syncText() {
+  if (!dbxOn()) return hasData() ? { t: "not backed up", c: "warn" } : { t: "version " + APP_VERSION, c: "" };
+  if (S.meta.conflict) return { t: "Dropbox copy differs · tap", c: "warn" };
+  if (syncing) return { t: "syncing…", c: "" };
+  if (S.meta.syncError) return { t: "Dropbox sync failed · tap", c: "warn" };
+  if (S.meta.dirty) { const n = S.meta.changes || 1; return { t: `${n} change${n === 1 ? "" : "s"} waiting${mobileBlocked() ? " (Wi‑Fi)" : ""}`, c: "" }; }
+  return { t: "in Dropbox ✓", c: "ok" };
+}
+function paintStatus() {
+  const el = $("#hdrsub"); if (!el) return; const act = S.vehicles.filter(isActive).length, s = syncText();
+  el.textContent = `${act} vehicle${act === 1 ? "" : "s"} · ${s.t}`; el.className = "sync " + s.c;
+  const p = $("#dbxStatus"); if (p) p.textContent = cap(s.t.replace(" · tap", ""));
+}
+
+/* sign-in: OAuth with PKCE — no password or secret is stored, only a revocable Dropbox token on this phone */
+async function dbxConnect() {
+  if (!navigator.onLine) { toast("You're offline. Connect Dropbox when you have internet."); return; }
+  const key = DBX_APP_KEY || (($("#dbxKey") || {}).value || S.meta.dbxKey || "").trim();
+  if (!/^[a-z0-9]{8,}$/i.test(key)) { S.tab = "more"; S.moreView = "backup"; closeSheet(); render(); toast("Paste the App key from the Dropbox App Console first"); return; }
+  const v = b64url(crypto.getRandomValues(new Uint8Array(48))), state = b64url(crypto.getRandomValues(new Uint8Array(12)));
+  const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
+  S.meta.dbxKey = key; S.meta.pkce = { v, state }; S.meta.syncError = null; await saveMeta();
+  location.href = "https://www.dropbox.com/oauth2/authorize?" + new URLSearchParams({ client_id: key, response_type: "code", code_challenge: challenge, code_challenge_method: "S256", redirect_uri: DBX_REDIRECT, token_access_type: "offline", state });
+}
+async function dbxReturn() {
+  const p = new URLSearchParams(location.search);
+  if (!p.has("code") && !p.has("error")) return false;
+  history.replaceState(null, "", DBX_REDIRECT);
+  if (p.has("error")) { toast("Dropbox not connected: " + (p.get("error_description") || p.get("error")).replace(/\+/g, " ")); return true; }
+  if (!S.meta.pkce || p.get("state") !== S.meta.pkce.state) { toast("That Dropbox sign-in didn't match. Tap Connect Dropbox again."); return true; }
+  try {
+    const r = await fetch(DBX_TOKEN, { method: "POST", body: new URLSearchParams({ grant_type: "authorization_code", code: p.get("code"), client_id: appKey(), code_verifier: S.meta.pkce.v, redirect_uri: DBX_REDIRECT }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.refresh_token) throw new Error(j.error_description || j.error || "HTTP " + r.status);
+    S.meta.dbx = { refresh: j.refresh_token, access: j.access_token, expires: Date.now() + (j.expires_in || 14400) * 1000 };
+    S.meta.pkce = null; S.meta.dbxRev = null; S.meta.syncError = null; S.meta.conflict = null; S.meta.sentFiles = []; await saveMeta();
+    toast(matchMedia("(display-mode: standalone)").matches ? "Dropbox connected" : "Dropbox connected. You can close this tab and open MyGarage from your home screen.");
+  } catch (e) { S.meta.pkce = null; S.meta.syncError = "Dropbox sign-in failed: " + (e.message || e); await saveMeta(); toast(S.meta.syncError); }
+  return true;
+}
+async function dbxToken() {
+  const d = S.meta.dbx; if (!d || !d.refresh) throw new Error("Dropbox is not connected");
+  if (d.access && d.expires > Date.now() + 60000) return d.access;
+  const r = await fetch(DBX_TOKEN, { method: "POST", body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: d.refresh, client_id: appKey() }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { if (j.error === "invalid_grant") { S.meta.dbx = null; S.meta.syncError = "Dropbox access was removed or has expired. Connect Dropbox again."; await saveMeta(); } throw new Error(j.error_description || j.error || "HTTP " + r.status); }
+  d.access = j.access_token; d.expires = Date.now() + (j.expires_in || 14400) * 1000; await saveMeta(); return d.access;
+}
+async function dbxCall(url, opt = {}, retry = true) {
+  const tok = await dbxToken();
+  const r = await fetch(url, { method: "POST", ...opt, headers: { ...(opt.headers || {}), Authorization: "Bearer " + tok } });
+  if (r.status === 401 && retry) { S.meta.dbx.access = null; return dbxCall(url, opt, false); }
+  if (r.status === 429 && retry) { await sleep(3000); return dbxCall(url, opt, false); }
+  if (!r.ok) { const t = await r.text().catch(() => ""); let s = t; try { s = JSON.parse(t).error_summary || t; } catch {} throw new DbxErr("Dropbox " + r.status + ": " + String(s).slice(0, 120), r.status, String(s)); }
+  return r;
+}
+async function dbxApi(ep, arg) { const r = await dbxCall("https://api.dropboxapi.com/2/" + ep, arg === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(arg) }); const t = await r.text(); return t ? JSON.parse(t) : null; }
+async function dbxMeta(path) { try { return await dbxApi("files/get_metadata", { path }); } catch (e) { if (notFound(e)) return null; throw e; } }
+async function dbxUpload(path, body, mode) { const r = await dbxCall("https://content.dropboxapi.com/2/files/upload", { headers: { "Content-Type": "application/octet-stream", "Dropbox-API-Arg": dbxArg({ path, mode: mode || "overwrite", autorename: false, mute: true }) }, body }); return r.json(); }
+async function dbxDownload(path) { const r = await dbxCall("https://content.dropboxapi.com/2/files/download", { headers: { "Dropbox-API-Arg": dbxArg({ path }) } }); return r.blob(); }
+async function dbxList(path) { try { let j = await dbxApi("files/list_folder", { path }), out = j.entries; while (j.has_more) { j = await dbxApi("files/list_folder/continue", { cursor: j.cursor }); out = out.concat(j.entries); } return out; } catch (e) { if (notFound(e)) return []; throw e; } }
+
+/* what goes to Dropbox.
+   Two phones can add and edit at the same time: each vehicle and record carries the time it was last changed (_t),
+   deletions are remembered (deleted: id → time), and on every sync the two copies are merged record by record —
+   the most recent change to a record wins, nothing new from either phone is dropped.
+   A restore (from a file or a snapshot) starts a new "generation" (gen): it replaces the copy everywhere instead of merging. */
+async function localData(files) {
+  files = files || await dbAll("files");
+  const [vehicles, entries] = await Promise.all([dbAll("vehicles"), dbAll("entries")]); // always what's actually saved
+  return { vehicles, entries, settings: S.meta.settings || null, deleted: S.meta.tomb || {}, gen: S.meta.gen || null,
+    files: files.map(f => ({ id: f.id, type: f.type, name: f.name, path: filePath(f) })) };
+}
+const wrap = d => JSON.stringify({ app: APP_ID, schema: 2, appVersion: APP_VERSION, updatedAt: new Date().toISOString(), owner: S.meta.deviceId, ownerName: ownerName(), data: d });
+async function payloadJSON(files) { return wrap(await localData(files)); }
+function readPayload(j) { const d = j && (j.data || j); if (!d || !Array.isArray(d.vehicles) || !Array.isArray(d.entries)) throw new Error("That isn't a MyGarage copy");
+  return { vehicles: d.vehicles, entries: d.entries, settings: d.settings || null, files: Array.isArray(d.files) ? d.files : [], deleted: d.deleted || {}, gen: d.gen || null }; }
+async function pushFiles(files) {
+  const sent = new Set(S.meta.sentFiles || []); let n = 0;
+  for (const f of files) { if (sent.has(f.id)) continue; await dbxUpload(filePath(f), f.blob, "overwrite"); sent.add(f.id); n++; if (n % 5 === 0) { S.meta.sentFiles = [...sent]; await saveMeta(); } }
+  if (n) { S.meta.sentFiles = [...sent]; await saveMeta(); }
+}
+const tOf = r => (r && r._t) || 0;
+function mergeData(L, R) {
+  const deleted = { ...(R.deleted || {}) }; for (const [id, t] of Object.entries(L.deleted || {})) deleted[id] = Math.max(deleted[id] || 0, t);
+  const pick = (a, b) => { const m = new Map(); for (const r of [...a, ...b]) { const c = m.get(r.id); if (!c || tOf(r) > tOf(c)) m.set(r.id, r); } return [...m.values()].filter(r => !(deleted[r.id] && deleted[r.id] >= tOf(r))); };
+  const fm = new Map(); for (const f of [...R.files, ...L.files]) if (!deleted[f.id]) fm.set(f.id, f);
+  const settings = tOf(L.settings) >= tOf(R.settings) ? L.settings || R.settings : R.settings;
+  return { vehicles: pick(L.vehicles, R.vehicles), entries: pick(L.entries, R.entries), files: [...fm.values()], settings, deleted, gen: R.gen || L.gen };
+}
+const sig = d => JSON.stringify([d.vehicles.map(r => r.id + ":" + tOf(r)).sort(), d.entries.map(r => r.id + ":" + tOf(r)).sort(), d.files.map(f => f.id).sort(), tOf(d.settings), Object.keys(d.deleted || {}).length, d.gen]);
+/* write a merged (or downloaded) copy onto the phone, changing only what differs and fetching photos it doesn't have */
+async function applyData(d, say, wholesale) {
+  const [lv, le, lf] = await Promise.all([dbAll("vehicles"), dbAll("entries"), dbAll("files")]);
+  const have = new Set(lf.map(f => f.id)), want = new Set(d.files.map(f => f.id));
+  const missing = d.files.filter(f => !have.has(f.id)); let n = 0;
+  for (const f of missing) { try { const b = await dbxDownload(f.path || filePath(f)); f._blob = new Blob([b], { type: f.type }); } catch (e) { if (!notFound(e)) throw e; } if (say && ++n % 5 === 0) say(`Downloading photos ${n} of ${missing.length}…`); }
+  _quiet++;
+  try {
+    for (const [store, local, next] of [["vehicles", lv, d.vehicles], ["entries", le, d.entries]]) {
+      const lm = new Map(local.map(r => [r.id, r])), nm = new Set(next.map(r => r.id));
+      for (const r of next) { const c = lm.get(r.id); if (!c || tOf(c) !== tOf(r) || wholesale) await dbPut(store, r); }
+      for (const r of local) if (!nm.has(r.id)) await dbDel(store, r.id);
+    }
+    for (const f of lf) if (!want.has(f.id)) await dbDel("files", f.id);
+    for (const f of missing) if (f._blob) await dbPut("files", { id: f.id, type: f.type, name: f.name, blob: f._blob });
+  } finally { _quiet--; }
+  if (missing.length || lf.some(f => !want.has(f.id))) { for (const u of Object.values(S.urls)) URL.revokeObjectURL(u); S.urls = {}; }
+  if (d.settings) S.meta.settings = d.settings;
+  S.meta.tomb = d.deleted || {}; S.meta.gen = d.gen || S.meta.gen;
+  const sent = new Set(S.meta.sentFiles || []); for (const f of d.files) if (!missing.includes(f) || f._blob) sent.add(f.id); S.meta.sentFiles = [...sent];
+  await saveMeta(); await reload();
+}
+async function loadFromDropboxData(d, say) { await applyData(d, say, true); }
+async function pushLive(mode, data) {
+  const seq = S.meta.seq, files = await dbAll("files");
+  await pushFiles(files);
+  if (!S.meta.gen) S.meta.gen = uid("g");
+  const res = await dbxUpload(LIVE, wrap(data || await localData(files)), mode || (S.meta.dbxRev ? { ".tag": "update", update: S.meta.dbxRev } : "add"));
+  S.meta.dbxRev = res.rev; S.meta.lastSync = Date.now(); S.meta.syncError = null; S.meta.conflict = null; S.meta.genPending = false;
+  if (S.meta.seq === seq) { S.meta.dirty = false; S.meta.changes = 0; }
+  await saveMeta();
+}
+async function adoptRemote() {
+  const rm = await dbxMeta(LIVE); if (!rm) return;
+  const d = readPayload(JSON.parse(await (await dbxDownload(LIVE)).text()));
+  await loadFromDropboxData(d); S.meta.gen = d.gen;
+  S.meta.dbxRev = rm.rev; S.meta.dirty = false; S.meta.changes = 0; S.meta.seq = (S.meta.seq || 0) + 1; S.meta.conflict = null; S.meta.genPending = false; S.meta.lastSync = Date.now(); S.meta.syncError = null; await saveMeta();
+  refreshScreen();
+}
+function refreshScreen() { if (!S.sheet) render(); else if (S.sheet.kind === "vehicle") { const sc = $("#sheet").scrollTop; openVehicle(S.sheet.id); $("#sheet").scrollTop = sc; render(); } else paintStatus(); }
+const mobileBlocked = () => !!(S.meta.wifiOnly && navigator.connection && navigator.connection.type === "cellular");
+function scheduleSync(ms = 4000) { clearTimeout(syncT); if (dbxOn()) syncT = setTimeout(() => dbxSync(), ms); }
+/* one sync round: read Dropbox's copy, merge with this phone's, save the result on both sides */
+async function syncOnce() {
+  const rm = await dbxMeta(LIVE);
+  if (!rm) { if (hasData() || S.meta.dirty) await pushLive("add"); else { S.meta.lastSync = Date.now(); S.meta.syncError = null; await saveMeta(); } return "pushed"; }
+  if (rm.rev === S.meta.dbxRev && !S.meta.dirty && !S.meta.genPending) { S.meta.lastSync = Date.now(); S.meta.syncError = null; await saveMeta(); return "none"; }
+  const R = readPayload(JSON.parse(await (await dbxDownload(LIVE)).text()));
+  if (S.meta.genPending) { // this phone was restored: its copy replaces Dropbox's (which is kept as a snapshot)
+    try { await dbxApi("files/copy_v2", { from_path: LIVE, to_path: snapName("replaced"), autorename: true }); } catch {}
+    await pushLive({ ".tag": "update", update: rm.rev }); return "pushed";
+  }
+  if (S.meta.gen && R.gen && R.gen !== S.meta.gen) { // Dropbox's copy was restored on the other phone
+    if (S.meta.dirty) { S.meta.conflict = { rev: rm.rev, when: rm.server_modified }; await saveMeta(); return "conflict"; }
+    await adoptRemote(); return "adopted";
+  }
+  const L = await localData();
+  const M = mergeData(L, R);
+  if (sig(M) !== sig(L)) await applyData(M);
+  if (sig(M) !== sig(R) || S.meta.dirty) { await pushLive({ ".tag": "update", update: rm.rev }, { ...(await localData()), gen: M.gen }); }
+  else { S.meta.dbxRev = rm.rev; S.meta.lastSync = Date.now(); S.meta.syncError = null; S.meta.dirty = false; S.meta.changes = 0; S.meta.gen = M.gen; await saveMeta(); }
+  if (sig(M) !== sig(L)) { refreshScreen(); return "merged"; }
+  return "pushed";
+}
+async function dbxSync(opts = {}) {
+  if (!dbxOn() || syncing) return;
+  if (!navigator.onLine) { if (opts.manual) toast("You're offline. Changes will go to Dropbox when you're back online."); paintStatus(); return; }
+  if (mobileBlocked() && !opts.manual) { paintStatus(); return; }
+  syncing = true; lastCheck = Date.now(); paintStatus(); let ok = false, failed = false, res = "";
+  const firstLoad = !hasData();
+  try {
+    for (let i = 0; i < 4; i++) { // someone else saved between our read and write: read again and re-merge
+      try { res = await syncOnce(); break; } catch (e) { if (e instanceof DbxErr && e.status === 409 && /conflict/.test(e.summary) && i < 3) { await sleep(400 + Math.random() * 800); continue; } throw e; }
+    }
+    ok = res !== "conflict";
+    if (firstLoad && hasData()) toast(`${S.vehicles.length} vehicles and ${S.entries.length} records loaded from Dropbox`);
+    else if (res === "merged" || res === "adopted") toast("Updated with changes from the other phone");
+  } catch (e) {
+    failed = true; S.meta.syncError = (!navigator.onLine || e instanceof TypeError) ? "Couldn't reach Dropbox. It will try again shortly." : String(e.message || e);
+    await saveMeta(); if (opts.manual) toast(S.meta.syncError);
+  } finally { syncing = false; }
+  if (ok && opts.manual) toast("Dropbox is up to date");
+  if (ok && hasData()) maybeSnapshot(false).catch(() => {});
+  paintStatus(); refreshBackupView();
+  clearTimeout(retryT); if (failed && dbxOn()) retryT = setTimeout(() => dbxSync(), 120000);
+  if (ok && S.meta.dirty) scheduleSync(1500);
+}
+async function maybeSnapshot(force) {
+  const day = new Date().toDateString(); if (!force && S.meta.lastSnapDay === day) return;
+  const files = await dbAll("files"); await pushFiles(files);
+  await dbxUpload(snapName(force ? "manual" : ""), await payloadJSON(files), "overwrite");
+  S.meta.lastSnapDay = day; S.meta.lastSnap = Date.now(); await saveMeta(); refreshBackupView();
+  pruneSnapshots().catch(() => {});
+}
+async function pruneSnapshots() {
+  const cut = Date.now() - 60 * 864e5;
+  for (const e of await dbxList("/snapshots")) { const m = e.name.match(/(\d{4})-(\d{2})-(\d{2})/); if (e[".tag"] === "file" && m && new Date(+m[1], m[2] - 1, +m[3]).getTime() < cut) { try { await dbxApi("files/delete_v2", { path: e.path_lower }); } catch {} } }
+}
+async function snapshotBeforeReplace() { if (!dbxOn() || !hasData()) return true; try { const files = await dbAll("files"); await pushFiles(files); await dbxUpload(snapName("before-restore"), await payloadJSON(files), "overwrite"); return true; } catch (e) { toast("Couldn't save a snapshot to Dropbox first, so nothing was changed. Check you're online."); return false; } }
+async function listSnapshots() {
+  const el = $("#snapList"); if (!el) return; el.innerHTML = `<p class="small muted" style="margin:0">Looking in Dropbox…</p>`;
+  try {
+    const list = (await dbxList("/snapshots")).filter(e => e[".tag"] === "file" && /\.json$/i.test(e.name)).sort((a, b) => String(b.server_modified).localeCompare(String(a.server_modified)));
+    el.innerHTML = list.length ? `<div class="lst">${list.slice(0, 60).map(e => `<div class="item"><div><b>${esc(fmtWhen(e.server_modified))}</b><div class="small muted">${/before-restore/.test(e.name) ? "Saved before a restore · " : /replaced/.test(e.name) ? "Dropbox copy that was replaced · " : /manual/.test(e.name) ? "Snapshot now · " : "Daily · "}${(e.size / 1024).toFixed(0)} KB</div></div><button type="button" class="btn sm" data-act="dbxUse" data-path="${esc(e.path_lower)}" data-when="${esc(e.server_modified)}">Use this</button></div>`).join("")}</div>` : `<p class="small muted" style="margin:0">No snapshots in Dropbox yet.</p>`;
+  } catch (e) { el.innerHTML = `<p class="small" style="color:var(--bad);margin:0">Couldn't list Dropbox snapshots: ${esc(e.message || e)}</p>`; }
+}
+async function useSnapshot(path) {
+  if (!navigator.onLine) { toast("You're offline."); return; }
+  const st = $("#rsStat") || {}; st.textContent = "Getting the snapshot…";
+  try {
+    const d = readPayload(JSON.parse(await (await dbxDownload(path)).text()));
+    if (!(await snapshotBeforeReplace())) { st.textContent = ""; return; }
+    await loadFromDropboxData(d, m => { st.textContent = m; });
+    S.meta.conflict = null; S.meta.gen = uid("g"); S.meta.genPending = true; markDirty(); S.tab = "garage"; S.moreView = null; render();
+    toast(`Snapshot restored: ${S.vehicles.length} vehicles, ${S.entries.length} records`);
+  } catch (e) { st.textContent = ""; toast("That snapshot couldn't be used: " + (e.message || e)); }
+}
+async function resolveConflict(useDropbox) {
+  if (!navigator.onLine) { toast("You're offline. Try again when you're online."); return; }
+  syncing = true; paintStatus();
+  try {
+    if (useDropbox) { if (hasData()) { const files = await dbAll("files"); await pushFiles(files); await dbxUpload(snapName("before-restore"), await payloadJSON(files), "overwrite"); } syncing = false; await adoptRemote(); toast("Using the Dropbox copy. This phone's copy was saved as a snapshot."); }
+    else { try { await dbxApi("files/copy_v2", { from_path: LIVE, to_path: snapName("replaced"), autorename: true }); } catch {} S.meta.gen = uid("g"); await pushLive("overwrite"); toast("Kept this phone's copy. The Dropbox copy was saved as a snapshot."); }
+  } catch (e) { toast("That didn't work: " + (e.message || e)); }
+  syncing = false; paintStatus(); render();
+}
+async function dbxDisconnect() {
+  try { await dbxApi("auth/token/revoke"); } catch {}
+  S.meta.dbx = null; S.meta.dbxRev = null; S.meta.conflict = null; S.meta.syncError = null; S.meta.sentFiles = []; await saveMeta();
+  clearTimeout(syncT); paintStatus(); render(); toast("Dropbox disconnected. Everything already in Dropbox is kept.");
+}
+function refreshBackupView() { if (S.tab === "more" && S.moreView === "backup" && !S.sheet) { const y = scrollY; render(); scrollTo(0, y); if (dbxOn()) fillStoreInfo(); } }
+function dropboxPanel() {
+  const m = S.meta;
+  if (!dbxOn()) return `<div class="panel" id="dbxPanel"><h3>Dropbox</h3>
+    <p style="margin:0">Connect Dropbox and your vehicles, records, photos and receipts are kept there as well as on this phone. Every change is sent within seconds, and a full snapshot is saved each day.</p>
+    <p style="margin:0">If this phone is cleared, lost or replaced, connect Dropbox on the new one and everything comes back.</p>
+    ${DBX_APP_KEY ? "" : `<div class="field"><label for="dbxKey">Dropbox App key</label><input id="dbxKey" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(m.dbxKey || "")}" placeholder="from the Dropbox App Console"><span class="hint">Redirect URI to enter in the App Console: <b>${esc(DBX_REDIRECT)}</b></span></div>`}
+    <div class="row"><button type="button" class="btn primary" data-act="dbxConnect">Connect Dropbox</button></div>
+    <p class="small muted" style="margin:0">MyGarage can only see its own folder, Dropbox › Apps › MyGarage. It can't see anything else in your Dropbox.</p></div>`;
+  const st = syncText();
+  return `${m.conflict ? `<div class="panel" style="border-color:var(--warn)"><h3>Which copy do you want to keep?</h3><p style="margin:0">Dropbox has a copy saved ${m.conflict.when ? fmtWhen(m.conflict.when) : "recently"} that's different from this phone, and this phone has changes that haven't been sent yet.</p><p class="small muted" style="margin:0">Whichever you don't keep is saved as a Dropbox snapshot first, so nothing is lost.</p><div class="row"><button type="button" class="btn primary" data-act="conflictDropbox">Use the Dropbox copy</button><button type="button" class="btn" data-act="conflictPhone">Keep this phone's copy</button></div></div>` : ""}
+  <div class="panel" id="dbxPanel"><h3>Dropbox</h3>
+    <dl class="kv"><dt>Status</dt><dd id="dbxStatus">${esc(cap(st.t.replace(" · tap", "")))}</dd><dt>Last sync</dt><dd>${esc(fmtWhen(m.lastSync))}</dd><dt>Last snapshot</dt><dd>${esc(fmtWhen(m.lastSnap))}</dd><dt>Folder</dt><dd>Dropbox › Apps › MyGarage</dd></dl>
+    ${m.syncError ? `<div class="banner bad"><span>${esc(m.syncError)}</span></div>` : ""}
+    <div class="row"><button type="button" class="btn primary" data-act="dbxSyncNow" ${syncing ? "disabled" : ""}>Sync now</button><button type="button" class="btn" data-act="dbxSnap">Snapshot now</button></div>
+    <label class="check-inline"><input type="checkbox" id="wifiOnly" ${m.wifiOnly ? "checked" : ""}> Only sync on Wi‑Fi</label>
+    <div class="row"><button type="button" class="btn" data-act="dbxList">Restore a Dropbox snapshot…</button><button type="button" class="btn danger" data-act="dbxDisconnect">Disconnect</button></div>
+    <div id="snapList"></div>
+    <p class="small muted" style="margin:0">In Dropbox › Apps › MyGarage: <b>live</b> holds the current copy (with a <b>files</b> folder for photos and receipts), and <b>snapshots</b> holds one full copy per day (plus one before every restore), kept for 60 days.</p></div>`;
+}
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "hidden") { if (S.meta.dirty) dbxSync(); return; }
+  const m = await dbGet("meta", "main").catch(() => null); // the Dropbox sign-in tab may have saved newer data
+  if (m && (m.stamp || 0) > (S.meta.stamp || 0)) { await reload(); if (!S.sheet) render(); paintStatus(); }
+  if (Date.now() - lastCheck > 60000) dbxSync();
+});
+window.addEventListener("online", () => dbxSync());
+document.addEventListener("change", e => { if (e.target.id === "wifiOnly") { S.meta.wifiOnly = e.target.checked; saveMeta(); paintStatus(); if (!S.meta.wifiOnly) dbxSync(); } });
+
 /* ================= events ================= */
 document.addEventListener("click", async ev => {
   const tab = ev.target.closest("[data-tab]");
@@ -1061,6 +1352,15 @@ document.addEventListener("click", async ev => {
     case "rsNo": _restore = null; $("#rsConfirm").innerHTML = ""; break;
     case "rtype": S.sheet.o.type = el.dataset.t; drawReport(); break;
     case "printReport": printReport(); break;
+    case "dbxConnect": el.disabled = true; try { await dbxConnect(); } catch (err) { toast("Couldn't start Dropbox sign-in: " + (err.message || err)); } el.disabled = false; break;
+    case "dbxSyncNow": dbxSync({ manual: true }); break;
+    case "dbxSnap": el.disabled = true; maybeSnapshot(true).then(() => toast("Snapshot saved to Dropbox")).catch(x => { el.disabled = false; toast("Snapshot didn't save: " + (x.message || x)); }); break;
+    case "dbxList": listSnapshots(); break;
+    case "dbxUse": $("#rsConfirm").innerHTML = `<div class="banner" style="margin-top:8px"><span>Replace everything on this phone with the Dropbox snapshot from ${esc(fmtWhen(el.dataset.when))}? What's here now is saved as a snapshot first.</span><button type="button" class="btn primary sm" data-act="dbxUseYes" data-path="${esc(el.dataset.path)}">Restore</button><button type="button" class="btn ghost sm" data-act="rsNo">Cancel</button></div>`; $("#rsConfirm").scrollIntoView({ behavior: "smooth", block: "center" }); break;
+    case "dbxUseYes": useSnapshot(el.dataset.path); break;
+    case "conflictDropbox": resolveConflict(true); break;
+    case "conflictPhone": resolveConflict(false); break;
+    case "dbxDisconnect": if (confirm("Disconnect Dropbox? Everything already in Dropbox is kept, but new changes will only be on this phone.")) dbxDisconnect(); break;
     case "reorderOn": S.reorder = true; render(); break;
     case "reorderOff": S.reorder = false; render(); toast("Order saved"); break;
     case "moveV": { const list = sortedV().filter(isActive), i = list.findIndex(x => x.id === id), j = i + (+el.dataset.d); if (i < 0 || j < 0 || j >= list.length) break; [list[i], list[j]] = [list[j], list[i]]; for (let k = 0; k < list.length; k++) if (list[k].order !== k) { const nv = clone(list[k]); nv.order = k; await dbPut("vehicles", nv); } await reload(); render(); break; }
@@ -1106,7 +1406,11 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && S.sheet) g
 async function reload() { [S.vehicles, S.entries] = await Promise.all(["vehicles", "entries"].map(dbAll)); const m = await dbGet("meta", "main"); S.meta = m ? (({ id, ...r }) => r)(m) : {}; _fcache.clear(); }
 (async () => {
   try { await openDB(); } catch (e) { $("#main").innerHTML = `<section class="view"><div class="empty">This browser can't store data for the app (private mode or storage blocked). Open it in normal Chrome.</div></section>`; return; }
-  await reload(); await migrateData(); render();
+  await reload(); await migrateData();
+  if (!S.meta.deviceId) { S.meta.deviceId = uid("dev"); S.meta.created = todayISO(); await saveMeta(); }
+  render();
+  if (await dbxReturn()) render();
+  dbxSync();
   const q = new URLSearchParams(location.search).get("log"); if (q && S.vehicles.length) openEntry({ type: q, back: null });
   if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
 })();

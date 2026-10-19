@@ -1,54 +1,69 @@
-# Garage Log — standalone vehicle app
+# MyGarage — vehicle records app (version 1.41)
 
-Runs on your phone with no Claude and no account. Vehicles, fuel, km, services, expenses and
-receipt photos are stored on the phone itself. Nothing is uploaded anywhere.
+Fuel, kilometres, charging, servicing, costs, warranty, reminders and sale reports for every vehicle.
+Runs on your phone, works offline, and keeps a live backup in your own Dropbox.
 
-## Files in this folder
+App address: **https://sskehan.github.io/garage/**
+
+## Files in this repository
 index.html · app.js · sw.js · manifest.webmanifest · jszip.min.js · icon-192.png · icon-512.png · README.md
 
-## 1. Put the app online (once, free) — GitHub Pages
-Same steps as the Maglite app.
-1. On github.com click **+** → **New repository**. Name it `garage`, choose **Public**, click **Create repository**.
-2. Click **uploading an existing file**, drag in all the files from this folder (not the folder itself), **Commit changes**.
-3. **Settings → Pages** → Source = **Deploy from a branch**, Branch = **main**, folder = **/ (root)** → **Save**.
-4. After 1–2 minutes the app is at `https://sskehan.github.io/garage/`
+Only program files go here. The repository is public, so **never upload a backup file to GitHub.**
 
-Never upload a backup .zip to GitHub — the repository is public.
+## 1. Install on your phone
+1. Open the app address in **Chrome**.
+2. Tap **⋮ → Install app** (or **Install and create shortcut → Install**).
+3. Open **MyGarage** from your app list (long-press it → Add to Home to put it on the home screen).
+4. Long-press the icon for the **Log fuel**, **Log charge** and **Log odometer** shortcuts.
 
-## 2. Install it on your Android phone
-Open the address in **Chrome** → **⋮ → Add to Home screen / Install app**.
-Long-press the icon for the **Log fuel** and **Log odometer** shortcuts.
+## 2. Dropbox backup
+### One-time: the Dropbox app (done — MyGarage, App key phvq3v06n9q3l18)
+1. Go to **dropbox.com/developers/apps** → **Create app**.
+2. Choose **Scoped access** → **App folder** → name it **MyGarage** → **Create app**.
+3. **Permissions** tab: tick `files.metadata.read`, `files.content.read`, `files.content.write` → **Submit**.
+4. **Settings** tab → **OAuth 2 → Redirect URIs**: add `https://sskehan.github.io/garage/` exactly → **Add**.
+   Leave **Allow public clients (Implicit Grant & PKCE)** set to **Allow**.
+5. Copy the **App key** (not the App secret — that is never used).
 
-## 3. Load your vehicles
-Save `garage-starter-backup.zip` to the phone. In the app: **Restore backup…** → pick the file → **Restore**.
-Loads the Kluger, Yaris, Triumph and Trailer with all service, cost and fuel history from the spreadsheet.
+### Connect the app
+**More → Backup & restore** → **Connect Dropbox** → sign in → **Allow**. (The App key `phvq3v06n9q3l18` is built in.)
+If the sign-in comes back in a Chrome tab, you can close the tab and open MyGarage from the home screen.
 
-## Day to day
-- **Fill-up:** tap the round **Log** button → type the odometer (or the trip km since the last fill), litres and total $. The $/L, km and L/100km are worked out. Untick **Filled to full** for a part fill, tick **Towing** when towing.
-- **Km only:** Log → Odometer. Any record with an odometer reading feeds the km stats.
-- **Service / expense:** Log → Service or Expense. Add photos of invoices. Logging Registration, CTP or Insurance offers to update the expiry date.
-- **Due tab:** rego, CTP, insurance and service reminders (service km projected from your average driving).
-- **Selling:** vehicle → **Reports** → Sale report → Print / PDF → Save as PDF. Then Edit → Status **Sold** to archive it with sale price and odometer.
+- MyGarage can only see its own folder, **Dropbox › Apps › MyGarage**:
+  - `live/mygarage.json` — the current copy, updated a few seconds after every change.
+  - `live/files/` — photos and receipts, each sent once.
+  - `snapshots/` — one full copy per day, plus one before every restore. Kept for 60 days.
+- The line under **MyGarage** at the top shows the status: **in Dropbox ✓**, **2 changes waiting** (they go when you're online), or **not backed up**. Tap it to open Backup & restore.
+- **Backup & restore** also has Sync now, Snapshot now, Restore a Dropbox snapshot, Only sync on Wi‑Fi, and Disconnect, plus the **backup file** option for an extra copy (e.g. on the QNAP).
 
-## Electric vehicles (v2)
-- **Add the Atto 1:** + Vehicle → *Start from a preset* → Essential or Premium. Fills in specs, warranty (6 yrs/150,000 km car, 8 yrs/160,000 km at 70% battery), 20,000 km/12-month servicing and the handbook's long-interval items. Add the plate, VIN, date bought, odometer when bought and warranty start date.
-- **Home charging:** once a month, Log → Charge → Home: odometer and the month's kWh from the Evnex app. Cost fills in from your home rate (More → Settings).
-- **Public charging:** Log → Charge → Public, from the receipt.
-- **Battery health:** when you do the handbook's full charge from below 10% (every 3–6 months), tick that box and add start %, end % and the kWh for that session.
-- **Parked:** tap *Parked from today* on the vehicle; storage reminders run from then and clear when you next log anything.
+## 3. Two phones
+Install MyGarage on the second phone, tap **Get my vehicles from Dropbox**, and sign in with the **same Dropbox account**.
 
-## Updating from v1
-Make a backup first. Upload the changed files: `app.js`, `index.html`, `sw.js`, `manifest.webmanifest`, `README.md`. Your records are untouched; the Kluger's warranty and hybrid health check are added automatically the first time v2 opens.
+- Both phones can add and edit at the same time. On each sync the two copies are merged record by record:
+  new records from both phones are kept, if both changed the same record the most recent change wins, and deletions carry across.
+- Each change goes to Dropbox a few seconds after it's saved; the other phone picks it up when MyGarage is opened or brought back to the screen.
+- A **restore** (from a file or a Dropbox snapshot) replaces the copy on both phones rather than merging — the copy it replaces is saved as a snapshot first.
 
-## Version 1.3
-- **Reorder vehicles:** Garage → ⇅ Reorder vehicles → ▲ / ▼ → Done.
-- **Dealer battery check:** on an EV service record, enter the dealer's battery state-of-health %. It shows with your own estimates on the vehicle, in Stats and on the sale report.
-- **Version number** at the bottom of More, with **Check for update**.
+## 4. Changing phones, or after clearing Chrome
+1. Install the app (step 1).
+2. Tap **Get my vehicles from Dropbox**, sign in, tap **Allow**. Everything comes back, including photos and receipts.
 
-## Backups — do this regularly
-More → Backup & restore → **Make backup file** → Save to phone, or Share to Drive / email / your NAS.
-Changing phones: install the app on the new phone, then Restore the latest backup.
-Uninstalling the app or clearing Chrome's site data deletes the records on that phone — the backup file is the safety copy.
+If you later open the app on the old phone, it merges with Dropbox like any second phone — nothing is overwritten.
 
-## If you change the app files later
-Edit `sw.js` and change `const VERSION` to the new version (e.g. `"gl-v1.4"`), and `APP_VERSION` at the top of `app.js` to match, then upload. Your data is not affected. More shows the version you're running, with a **Check for update** button.
+When clearing Chrome's history, untick **Cookies and site data** — ticking it deletes the copy on the phone (Dropbox still has it).
+
+## 5. Updating the app
+1. Make sure the status line says **in Dropbox ✓**.
+2. Upload the changed files to this repository (**Add file → Upload files → Commit changes**).
+3. In the app: **More → Check for update** (tap twice if the version number doesn't change).
+
+Your data is not affected. When a file changes, `APP_VERSION` at the top of `app.js` and `VERSION` in `sw.js` change together.
+
+## Version history
+- **1.41** — Two phones: records merged automatically; Dropbox App key built in.
+- **1.4** — Dropbox live backup with daily snapshots and two-phone handling; renamed MyGarage.
+- **1.3** — Reorder vehicles; dealer battery health checks; version number and Check for update.
+- **v2** — Electric vehicles and charging, battery health, warranty, scheduled service items, parked mode, BYD Atto 1 presets.
+- **v1** — Vehicles, fuel, odometer, service and expense records, reminders, stats, reports, backup file, CSV export.
+
+The full user guide (PDF) covers everyday use: logging, reminders, stats, reports and settings.

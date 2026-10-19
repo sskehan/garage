@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Garage Log</title>
+<title>MyGarage</title>
 <meta name="theme-color" content="#14181c">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -44,6 +44,11 @@ h1,h2,h3{font-family:var(--f-display);font-weight:600;letter-spacing:.01em;text-
 .top .wrap{display:flex;align-items:center;gap:12px;padding-block:10px}
 .brand{font-family:var(--f-display);font-size:22px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;flex:1;min-width:0;line-height:1.1}
 .brand small{display:block;font:500 11px/1.4 var(--f-mono);letter-spacing:.12em;color:#9aa4b0;text-transform:uppercase}
+.brand small.warn{color:#efa443}
+.brand small.ok{color:#5fe0c9}
+.lst{display:flex;flex-direction:column;gap:8px}
+.lst .item{display:flex;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px}
+.lst .item div{flex:1;min-width:0}
 .btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;text-decoration:none;color:inherit}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .btn.ghost{background:transparent}
@@ -207,7 +212,7 @@ details summary{padding:4px 0}
 </head>
 <body>
 <header class="top"><div class="wrap">
-  <div class="brand">Garage Log<small id="hdrsub">Loading…</small></div>
+  <div class="brand">MyGarage<small id="hdrsub" data-act="goBackup" style="cursor:pointer">Loading…</small></div>
   <button class="btn" id="addVehBtn" type="button" data-act="newVehicle">+ Vehicle</button>
 </div></header>
 

@@ -1,5 +1,5 @@
 // MyGarage — offline support. Bump VERSION when you change any app file.
-const VERSION = "gl-v1.43";
+const VERSION = "gl-v1.44";
 const SHELL = ["./", "index.html", "app.js", "jszip.min.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION && k !== "gl-fonts").map(k => caches.delete(k)))).then(() => self.clients.claim())); });

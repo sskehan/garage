@@ -1,6 +1,6 @@
 "use strict";
 /* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.43";
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.44";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -74,6 +74,8 @@ const IC = {
 };
 const FUEL_GRADES = ["ULP 91", "E10", "Premium 95", "Premium 98", "Diesel", "Premium diesel", "LPG", "E85"];
 function gradeOptions(cur, allowBlank) { const list = [...FUEL_GRADES]; if (cur && !list.includes(cur)) list.unshift(cur); return (allowBlank || !cur ? `<option value="">—</option>` : "") + list.map(g => `<option ${g === cur ? "selected" : ""}>${esc(g)}</option>`).join(""); }
+const SVC_TYPES = ["Scheduled service", "Safety recall", "Warranty repair", "Repair / other"];
+const isSched = e => !e.svcType || e.svcType === SVC_TYPES[0]; // only scheduled services restart the service countdown
 const kindIcon = v => IC[v.kind] || IC.other;
 const TYPE_LABEL = { charge: "Charge", fuel: "Fuel", odo: "Odometer", service: "Service", expense: "Expense" };
 
@@ -129,7 +131,7 @@ function econOver(segs, from, to, tow) { let k = 0, l = 0; for (const s of segs)
 
 /* servicing & reminders */
 function nextService(v) {
-  const sv = ownEntries(v).filter(e => e.type === "service");
+  const sv = ownEntries(v).filter(e => e.type === "service" && isSched(e));
   const last = sv[sv.length - 1];
   let km = null, date = null, basis = "";
   if (last) {
@@ -307,7 +309,7 @@ function hrow(e, v, fc) {
     s.push(kmf(e.odo)); if (d.dist != null) s.push(`+${nf(d.dist, 0)} km`); if (e.location) s.push(e.location);
     r = e.cost != null ? money(e.cost) : "—"; rs = d.econ != null ? `${nf(d.econ)} L/100${d.tow ? " 🚚" : ""}` : (e.ppl ? `${money(e.ppl, 3)}/L` : "");
     if (d.odd) tags.push(`<span class="tag soon">check</span>`);
-  } else if (e.type === "service") { t = e.desc || "Service"; if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; if (e.dealerSoh != null) rs = `🔋 ${nf(e.dealerSoh, 0)}% dealer`; }
+  } else if (e.type === "service") { t = e.desc || (isSched(e) ? "Service" : e.svcType); if (!isSched(e)) tags.push(`<span class="tag acc">${esc(e.svcType)}</span>`); if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; if (e.dealerSoh != null) rs = `🔋 ${nf(e.dealerSoh, 0)}% dealer`; }
   else if (e.type === "expense") { t = (e.category || "Expense") + (e.desc ? " — " + e.desc : ""); if (e.odo != null) s.push(kmf(e.odo)); r = e.cost != null ? money(e.cost) : "—"; }
   else if (e.type === "charge") { const cr = capReading(e, v); t = `${nf(e.kwh, 1)} kWh · ${e.where === "public" ? "Public " + (e.current || "DC") : "Home"}`; if (e.odo != null) s.push(kmf(e.odo)); if (e.location) s.push(e.location); r = e.cost != null ? (e.costEst ? "~" : "") + money(e.cost) : "—"; if (cr) rs = `🔋 ${cr.pct != null ? nf(cr.pct, 0) + "%" : nf(cr.cap, 1) + " kWh"}`; }
   else { t = "Odometer " + kmf(e.odo); if (e.notes) s.push(e.notes); }
@@ -427,11 +429,11 @@ function drawEntry() {
     <div class="form2"><div class="field"><label>Servo / location</label><input data-k="location" list="locs" value="${esc(e.location || "")}"><datalist id="locs">${locs.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field"><label>Fuel</label><select data-k="grade">${gradeOptions(e.grade || v.fuelGrade || "")}</select></div></div>`;
   else if (t === "charge") body = chargeBody(e, v, odoField);
   else if (t === "odo") body = odoField;
-  else if (t === "service") body = `${odoField}${svcItemsChecks(e, v)}<div class="field"><label>What was done</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 48 mth / 60k logbook service"><div class="qchips" style="margin-top:4px">${SVC_CHIPS.map(c => `<button type="button" data-act="svcChip" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>
+  else if (t === "service") body = `<div class="field"><label>Type of work</label><select data-k="svcType" data-redraw="1">${SVC_TYPES.map(x => `<option ${x === (e.svcType || SVC_TYPES[0]) ? "selected" : ""}>${x}</option>`).join("")}</select><span class="hint">${isSched(e) ? "Restarts the service countdown." : "Kept in the history and sale report, but doesn't change when the next service is due."}</span></div>${odoField}${svcItemsChecks(e, v)}<div class="field"><label>What was done</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 48 mth / 60k logbook service"><div class="qchips" style="margin-top:4px">${SVC_CHIPS.map(c => `<button type="button" data-act="svcChip" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div></div>
     ${usesCharge(v) ? `<div class="field" style="max-width:260px"><label>Dealer battery health check (%) — optional</label><input data-k="dealerSoh" inputmode="decimal" data-num="1" value="${e.dealerSoh ?? ""}" placeholder="e.g. 98"><span class="hint">If the dealer gives a battery state-of-health figure at this service.</span></div>` : ""}
     <div class="form2"><div class="field"><label>Workshop</label><input data-k="workshop" list="shops" value="${esc(e.workshop || "")}"><datalist id="shops">${shops.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field mid"><label>Cost $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div>
     <div class="field"><label>Invoice / job no.</label><input data-k="invoice" value="${esc(e.invoice || "")}"></div><div></div>
-    <div class="field"><label>Next service due (km)</label><input data-k="nextKm" inputmode="numeric" data-num="1" value="${e.nextKm ?? ""}" placeholder="${v.svcKm ? "auto: +" + v.svcKm.toLocaleString("en-AU") : ""}"></div><div class="field"><label>Next service due (date)</label><input data-k="nextDate" type="date" value="${esc(e.nextDate || "")}"><span class="hint">${v.svcMonths ? `Left blank = ${v.svcMonths} months after the service` : ""}</span></div></div>`;
+    ${isSched(e) ? `<div class="field"><label>Next service due (km)</label><input data-k="nextKm" inputmode="numeric" data-num="1" value="${e.nextKm ?? ""}" placeholder="${v.svcKm ? "auto: +" + v.svcKm.toLocaleString("en-AU") : ""}"></div><div class="field"><label>Next service due (date)</label><input data-k="nextDate" type="date" value="${esc(e.nextDate || "")}"><span class="hint">${v.svcMonths ? `Left blank = ${v.svcMonths} months after the service` : ""}</span></div>` : ""}</div>`;
   else if (t === "expense") { const cats = st.categories.includes(e.category) || !e.category ? st.categories : [e.category, ...st.categories]; const ren = RENEW[e.category];
     body = `<div class="form2"><div class="field"><label>Category</label><select data-k="category" data-redraw="1"><option value="" disabled ${e.category ? "" : "selected"}>— choose —</option>${cats.map(c => `<option ${c === e.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div><div class="field mid"><label>Amount $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div></div>
     <div class="field"><label>Description</label><input data-k="desc" value="${esc(e.desc || "")}" placeholder="e.g. 4 × Bridgestone tyres"></div>
@@ -475,7 +477,7 @@ function livePreview() {
     if (q.p) bits.push([money(q.p, 3), "per litre"]); if (q.c != null && e.cost == null) bits.push([money(q.c), "total"]); if (q.l && !e.litres) bits.push([nf(q.l, 2), "litres"]);
   } else if (e.type === "odo" || e.type === "service") {
     const lr = lastReadingBefore(v, e); if (e.odo != null && lr) bits.push([(e.odo - lr.odo >= 0 ? "+" : "") + nf(e.odo - lr.odo, 0), `km since ${fmtShort(lr.date)}`]);
-    if (e.type === "service") { const nk = e.nextKm ?? (v.svcKm && e.odo != null ? e.odo + v.svcKm : null), nd = e.nextDate || (v.svcMonths ? addMonths(e.date, v.svcMonths) : null); if (nk || nd) bits.push([[nk && kmf(nk), nd && fmtDate(nd)].filter(Boolean).join(" / "), "next service due"]); }
+    if (e.type === "service" && isSched(e)) { const nk = e.nextKm ?? (v.svcKm && e.odo != null ? e.odo + v.svcKm : null), nd = e.nextDate || (v.svcMonths ? addMonths(e.date, v.svcMonths) : null); if (nk || nd) bits.push([[nk && kmf(nk), nd && fmtDate(nd)].filter(Boolean).join(" / "), "next service due"]); }
   }
   if (e.type === "charge") bits.push(...chargePreview(e, v));
   pv.innerHTML = bits.length ? `<div class="preview">${bits.map(([b, s]) => `<div><b>${esc(b)}</b><small>${esc(s)}</small></div>`).join("")}</div>` : "";
@@ -509,14 +511,16 @@ async function saveEntry() {
   }
   const w = entryWarnings(e, v); const sig = w.join("|");
   if (w.length && S.sheet.warned !== sig) { S.sheet.warned = sig; $("#warn").innerHTML = `<div class="banner bad"><span><b>Please check:</b><ul>${w.map(x => `<li>${esc(x)}</li>`).join("")}</ul>Tap Save again to keep it anyway.</span></div>`; $("#warn").scrollIntoView({ behavior: "smooth", block: "center" }); return; }
-  if (e.type === "service") { if (e.nextKm == null && v.svcKm && e.odo != null) e.nextKm = e.odo + v.svcKm; if (!e.nextDate && v.svcMonths) e.nextDate = addMonths(e.date, v.svcMonths); }
+  if (e.type === "service" && !isSched(e)) { delete e.nextKm; delete e.nextDate; }
+  if (e.type === "service" && e.svcType === SVC_TYPES[0]) delete e.svcType;
+  if (e.type === "service" && isSched(e)) { if (e.nextKm == null && v.svcKm && e.odo != null) e.nextKm = e.odo + v.svcKm; if (!e.nextDate && v.svcMonths) e.nextDate = addMonths(e.date, v.svcMonths); }
   if (e.prevOwner != null && v.acqDate && (e.date < v.acqDate) === e.prevOwner) delete e.prevOwner;
   const renew = e._renew; const ren = RENEW[e.category];
   for (const k of Object.keys(e)) if (k.startsWith("_") || e[k] === null) delete e[k];
   if (e.type === "charge") prepCharge(e);
   if (e.type !== "charge") for (const k of CH_KEYS) delete e[k];
   if (e.type !== "fuel") { delete e.full; delete e.towing; delete e.litres; delete e.ppl; delete e.grade; if (e.type !== "charge") delete e.location; }
-  if (e.type !== "service") { delete e.nextKm; delete e.nextDate; delete e.workshop; delete e.invoice; delete e.items; delete e.dealerSoh; }
+  if (e.type !== "service") { delete e.nextKm; delete e.nextDate; delete e.workshop; delete e.invoice; delete e.items; delete e.dealerSoh; delete e.svcType; }
   if (e.type !== "expense") { delete e.category; delete e.ref; }
   e.id = e.id || uid("e"); e.created = e.created || Date.now(); e.updated = Date.now();
   await dbPut("entries", e);
@@ -752,7 +756,7 @@ function buildReport(v, o) {
     <table class="kv">${rRows([["Odometer", usesOdo(v) && odoNow ? `${kmf(odoNow.odo)} (${fmtDate(odoNow.date)})` : ""], ["Registration", [v.rego, v.regoState].filter(Boolean).join(" ")], ["Rego expires", v.regoExpiry && isActive(v) ? fmtDate(v.regoExpiry) : ""], ["VIN", v.vin], ["Engine no.", v.engineNo], ["Tare", v.tareKg ? v.tareKg + " kg" : ""], ["ATM / GVM", v.atmKg ? v.atmKg + " kg" : ""], ["Battery", v.battKwh ? `${v.battKwh} kWh${v.battType ? " " + v.battType : ""}` : ""], ["Owned since", v.acqDate ? fmtDate(v.acqDate) : ""], ["Next service", ns && isActive(v) ? [ns.km && kmf(ns.km), ns.date && fmtDate(ns.date)].filter(Boolean).join(" or ") : ""]])}</table></div>`;
   const svcCostShown = o.type === "own" || o.costs;
   const svcTotal = svc.filter(e => !isPrev(e, v) || o.type === "sale").reduce((s, e) => s + costOf(e), 0);
-  const svcTable = svc.length ? `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Work done</th><th>Workshop</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}${o.type === "own" ? "<th>Invoice</th>" : ""}</tr></thead><tbody>${svc.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc(e.desc || "Service")}${isPrev(e, v) ? " †" : ""}${e.notes ? `<div class="sm">${esc(e.notes)}</div>` : ""}</td><td>${esc(e.workshop || "")}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}${o.type === "own" ? `<td class="mono sm">${esc(e.invoice || "")}</td>` : ""}</tr>`).join("")}${svcCostShown ? `<tr class="tot"><td colspan="4">${svc.length} services recorded</td><td class="n">${money(svcTotal)}</td>${o.type === "own" ? "<td></td>" : ""}</tr>` : ""}</tbody></table>${svc.some(e => isPrev(e, v)) ? `<div class="sm">† Before ${o.type === "sale" ? "my" : "your"} ownership, from the service book.${o.type === "own" ? " Not included in your costs." : ""}</div>` : ""}` : `<p>No services recorded.</p>`;
+  const svcTable = svc.length ? `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Work done</th><th>Workshop</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}${o.type === "own" ? "<th>Invoice</th>" : ""}</tr></thead><tbody>${svc.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc(e.desc || (isSched(e) ? "Service" : e.svcType))}${isSched(e) ? "" : ` <span class="sm">(${esc(e.svcType.toLowerCase())})</span>`}${isPrev(e, v) ? " †" : ""}${e.notes ? `<div class="sm">${esc(e.notes)}</div>` : ""}</td><td>${esc(e.workshop || "")}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}${o.type === "own" ? `<td class="mono sm">${esc(e.invoice || "")}</td>` : ""}</tr>`).join("")}${svcCostShown ? `<tr class="tot"><td colspan="4">${svc.length} services recorded</td><td class="n">${money(svcTotal)}</td>${o.type === "own" ? "<td></td>" : ""}</tr>` : ""}</tbody></table>${svc.some(e => isPrev(e, v)) ? `<div class="sm">† Before ${o.type === "sale" ? "my" : "your"} ownership, from the service book.${o.type === "own" ? " Not included in your costs." : ""}</div>` : ""}` : `<p>No services recorded.</p>`;
   const maintTable = list => `<table class="rt"><thead><tr><th>Date</th><th class="n">Odometer</th><th>Item</th>${svcCostShown ? `<th class="n">Cost</th>` : ""}</tr></thead><tbody>${list.map(e => `<tr class="${isPrev(e, v) ? "po" : ""}"><td style="white-space:nowrap">${fmtDate(e.date)}</td><td class="n">${e.odo != null ? nf(e.odo, 0) : "—"}</td><td>${esc([e.category, e.desc].filter(Boolean).join(" — "))}${isPrev(e, v) ? " †" : ""}</td>${svcCostShown ? `<td class="n">${e.cost != null ? money(e.cost) : "—"}</td>` : ""}</tr>`).join("")}</tbody></table>`;
   const foot = `<div class="rnote">Records kept by the owner in MyGarage. Report generated ${fmtDate(today)}.${o.type === "sale" ? " Invoices and receipts available on request." : ""}</div>`;
   if (o.type === "sale") {

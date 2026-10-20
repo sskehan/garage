@@ -1,6 +1,6 @@
 "use strict";
 /* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.45";
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.46";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -323,7 +323,7 @@ function hrow(e, v, fc) {
     s.push(kmf(e.odo)); if (d.dist != null) s.push(`+${nf(d.dist, 0)} km`); if (e.location) s.push(e.location);
     r = e.cost != null ? money(e.cost) : "—"; rs = d.econ != null ? `${nf(d.econ)} L/100${d.tow ? " 🚚" : ""}` : (e.ppl ? `${money(e.ppl, 3)}/L` : "");
     if (d.odd) tags.push(`<span class="tag soon">check</span>`);
-  } else if (e.type === "service") { t = e.desc || (isSched(e) ? "Service" : e.svcType); if (!isSched(e)) tags.push(`<span class="tag acc">${esc(e.svcType)}</span>`); if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; if (e.dealerSoh != null) rs = `🔋 ${nf(e.dealerSoh, 0)}% dealer`; if (isBT(e)) { r = e.cost != null ? money(e.cost) : ""; rs = esc(battText(e)); } }
+  } else if (e.type === "service") { t = e.desc || (isSched(e) ? "Service" : e.svcType); if (!isSched(e)) tags.push(`<span class="tag acc">${esc(e.svcType)}</span>`); if (e.odo != null) s.push(kmf(e.odo)); if (e.workshop) s.push(e.workshop); r = e.cost != null ? money(e.cost) : "—"; if (e.dealerSoh != null) rs = `🔋 ${nf(e.dealerSoh, 0)}% dealer`; if (isBT(e)) { r = e.volts != null ? `${nf(e.volts, 2)} V` : (e.cost != null ? money(e.cost) : ""); rs = e.cca && e.ccaRated ? `${nf(e.cca / e.ccaRated * 100, 0)}% CCA` : ""; if (e.battResult && !/^(Good|OK)/.test(e.battResult)) tags.push(`<span class="tag soon">${esc(e.battResult.split(" ")[0])}</span>`); } }
   else if (e.type === "expense") { t = (e.category || "Expense") + (e.desc ? " — " + e.desc : ""); if (e.odo != null) s.push(kmf(e.odo)); r = e.cost != null ? money(e.cost) : "—"; }
   else if (e.type === "charge") { const cr = capReading(e, v); t = `${nf(e.kwh, 1)} kWh · ${e.where === "public" ? "Public " + (e.current || "DC") : "Home"}`; if (e.odo != null) s.push(kmf(e.odo)); if (e.location) s.push(e.location); r = e.cost != null ? (e.costEst ? "~" : "") + money(e.cost) : "—"; if (cr) rs = `🔋 ${cr.pct != null ? nf(cr.pct, 0) + "%" : nf(cr.cap, 1) + " kWh"}`; }
   else { t = "Odometer " + kmf(e.odo); if (e.notes) s.push(e.notes); }

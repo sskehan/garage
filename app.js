@@ -1,6 +1,6 @@
 "use strict";
 /* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.47";
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.48";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -442,7 +442,7 @@ function drawEntry() {
   const odoField = usesOdo(v) ? `<div class="field bigodo ${t === "fuel" ? "" : "full"}"><label for="fOdo">Odometer (km)${t === "odo" || t === "fuel" || t === "charge" ? "" : " — optional"}</label><input id="fOdo" data-k="odo" inputmode="numeric" pattern="[0-9]*" value="${e.odo ?? ""}" placeholder="${lr ? Math.round(lr.odo) : ""}" ${S.sheet.id ? "" : "autofocus"}><span class="hint">${lr ? `Last: ${kmf(lr.odo)} on ${fmtDate(lr.date)}` : "No earlier reading"}</span></div>` : "";
   let body = "";
   if (t === "fuel") body = `<div class="form2">${odoField}<div class="field bigodo"><label for="fTrip">or Trip km since last fill</label><input id="fTrip" data-k="_trip" inputmode="numeric" pattern="[0-9]*" placeholder="${pf ? "e.g. 520" : "—"}" ${pf ? "" : "disabled"}><span class="hint">${pf ? `Last fill at ${kmf(pf.odo)}` : "Needs an earlier fill"}</span></div></div>
-    <div class="form3"><div class="field mid"><label>Litres</label><input data-k="litres" inputmode="decimal" data-num="1" value="${e.litres ?? ""}"></div><div class="field mid"><label>Total $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div><div class="field mid"><label>$ per litre</label><input data-k="ppl" inputmode="decimal" data-num="1" value="${e.ppl != null ? r2(e.ppl * 1000) / 1000 : ""}" placeholder="auto"></div></div>
+    <div class="form3"><div class="field mid"><label>Total $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div><div class="field mid"><label>Litres</label><input data-k="litres" inputmode="decimal" data-num="1" value="${e.litres ?? ""}"></div><div class="field mid"><label>$ per litre</label><input data-k="ppl" inputmode="decimal" data-num="1" value="${e.ppl != null ? Math.round(e.ppl * 1000) / 1000 : ""}" placeholder="auto"></div></div>
     <div class="toggles"><label class="check-inline"><input type="checkbox" data-k="full" ${e.full !== false ? "checked" : ""}> Filled to full</label><label class="check-inline"><input type="checkbox" data-k="towing" ${e.towing ? "checked" : ""}> Towing since last fill</label></div>
     <div class="form2"><div class="field"><label>Servo / location</label><input data-k="location" list="locs" value="${esc(e.location || "")}"><datalist id="locs">${locs.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field"><label>Fuel</label><select data-k="grade">${gradeOptions(e.grade || v.fuelGrade || "")}</select></div></div>`;
   else if (t === "charge") body = chargeBody(e, v, odoField);

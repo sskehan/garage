@@ -1,6 +1,6 @@
 "use strict";
 /* MyGarage — offline vehicle records. Data lives on this device (IndexedDB), with a live copy in Dropbox when connected. */
-const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.49";
+const APP_ID = "garage-log", BACKUP_VERSION = 1, APP_VERSION = "1.51";
 
 /* ================= storage ================= */
 const STORES = ["vehicles", "entries", "files", "meta"];
@@ -439,10 +439,10 @@ function drawEntry() {
   const types = typesFor(v);
   const locs = [...new Set(S.entries.filter(x => x.location).map(x => x.location))].slice(-60);
   const shops = [...new Set(S.entries.filter(x => x.workshop).map(x => x.workshop))];
-  const odoField = usesOdo(v) ? `<div class="field bigodo ${t === "fuel" ? "" : "full"}"><label for="fOdo">Odometer (km)${t === "odo" || t === "fuel" || t === "charge" ? "" : " — optional"}</label><input id="fOdo" data-k="odo" inputmode="numeric" pattern="[0-9]*" value="${e.odo ?? ""}" placeholder="${lr ? Math.round(lr.odo) : ""}" ${S.sheet.id ? "" : "autofocus"}><span class="hint">${lr ? `Last: ${kmf(lr.odo)} on ${fmtDate(lr.date)}` : "No earlier reading"}</span></div>` : "";
+  const odoField = usesOdo(v) ? `<div class="field bigodo ${t === "fuel" ? "" : "full"}"><label for="fOdo">Odometer (km)${t === "odo" || t === "fuel" || t === "charge" ? "" : " — optional"}</label><input id="fOdo" ${t === "fuel" ? 'class="key"' : ""} data-k="odo" inputmode="numeric" pattern="[0-9]*" value="${e.odo ?? ""}" placeholder="${lr ? Math.round(lr.odo) : ""}" ${S.sheet.id ? "" : "autofocus"}><span class="hint">${lr ? `Last: ${kmf(lr.odo)} on ${fmtDate(lr.date)}` : "No earlier reading"}</span></div>` : "";
   let body = "";
   if (t === "fuel") body = `<div class="form2">${odoField}<div class="field bigodo"><label for="fTrip">or Trip km since last fill</label><input id="fTrip" data-k="_trip" inputmode="numeric" pattern="[0-9]*" placeholder="${pf ? "e.g. 520" : "—"}" ${pf ? "" : "disabled"}><span class="hint">${pf ? `Last fill at ${kmf(pf.odo)}` : "Needs an earlier fill"}</span></div></div>
-    <div class="form2 fuel3"><div class="field mid"><label>Total $</label><input data-k="cost" inputmode="decimal" data-num="1" value="${e.cost ?? ""}"></div><div class="field mid"><label>Litres</label><input data-k="litres" inputmode="decimal" data-num="1" value="${e.litres ?? ""}"></div><div class="field mid"><label>$ per litre</label><input data-k="ppl" inputmode="decimal" data-num="1" value="${e.ppl != null ? Math.round(e.ppl * 1000) / 1000 : ""}" placeholder="auto"></div></div>
+    <div class="form2 fuel3"><div class="field mid"><label>Total $</label><input class="key" data-k="cost" data-dp="2" inputmode="decimal" data-num="1" value="${e.cost != null ? Number(e.cost).toFixed(2) : ""}"></div><div class="field mid"><label>Litres</label><input class="key" data-k="litres" data-dp="2" inputmode="decimal" data-num="1" value="${e.litres != null ? Number(e.litres).toFixed(2) : ""}"></div><div class="field mid"><label>$ per litre</label><input data-k="ppl" inputmode="decimal" data-num="1" value="${e.ppl != null ? Math.round(e.ppl * 1000) / 1000 : ""}" placeholder="auto"></div></div>
     <div class="toggles"><label class="check-inline"><input type="checkbox" data-k="full" ${e.full !== false ? "checked" : ""}> Filled to full</label><label class="check-inline"><input type="checkbox" data-k="towing" ${e.towing ? "checked" : ""}> Towing since last fill</label></div>
     <div class="form2"><div class="field"><label>Servo / location</label><input data-k="location" list="locs" value="${esc(e.location || "")}"><datalist id="locs">${locs.map(l => `<option value="${esc(l)}">`).join("")}</datalist></div><div class="field"><label>Fuel</label><select data-k="grade">${gradeOptions(e.grade || v.fuelGrade || "")}</select></div></div>`;
   else if (t === "charge") body = chargeBody(e, v, odoField);
@@ -473,7 +473,7 @@ function drawEntry() {
       <div id="pv"></div>
       <div class="field"><label>Notes</label><textarea data-k="notes" style="min-height:60px">${esc(e.notes || "")}</textarea></div>
       ${prevQ || e.prevOwner != null ? `<label class="check-inline"><input type="checkbox" data-k="prevOwner" ${isPrev(e, v) ? "checked" : ""}> Done by a previous owner (not counted in my costs)</label>` : ""}
-      <div><div class="lbl" style="margin-bottom:6px">Receipts / photos</div><div class="files">${(e.receipts || []).map((r, i) => `<div class="fileth">${String(r.type || "").startsWith("image/") ? `<a data-fid="${esc(r.id)}" target="_blank" rel="noopener"><img data-fid="${esc(r.id)}" alt="${esc(r.name)}"></a>` : `<a data-fid="${esc(r.id)}" target="_blank" rel="noopener" style="color:inherit;padding:4px">📄 ${esc(r.name || "PDF")}</a>`}<button type="button" class="x" data-act="rmReceipt" data-i="${i}" aria-label="Remove">×</button></div>`).join("")}<button type="button" class="fileth" style="cursor:pointer;border-style:dashed" data-act="pickReceipt">+ Add</button></div></div>
+      <div><div class="lbl" style="margin-bottom:6px">Receipts / photos</div><div class="files">${(e.receipts || []).map((r, i) => `<div class="fileth">${String(r.type || "").startsWith("image/") ? `<a data-fid="${esc(r.id)}" target="_blank" rel="noopener"><img data-fid="${esc(r.id)}" alt="${esc(r.name)}"></a>` : `<a data-fid="${esc(r.id)}" target="_blank" rel="noopener" style="color:inherit;padding:4px">📄 ${esc(r.name || "PDF")}</a>`}<button type="button" class="x" data-act="rmReceipt" data-i="${i}" aria-label="Remove">×</button>${String(r.type || "").startsWith("image/") ? `<button type="button" class="crop" data-act="cropReceipt" data-i="${i}" aria-label="Crop or rotate">✂ Crop</button>` : ""}</div>`).join("")}<button type="button" class="fileth" style="cursor:pointer;border-style:dashed" data-act="pickReceipt">+ Add</button></div></div>
     </div>
     <div id="warn"></div>
     <button type="button" class="btn primary big" data-act="saveEntry">Save ${TYPE_LABEL[t].toLowerCase()}</button>
@@ -561,8 +561,10 @@ async function saveEntry() {
 }
 async function addReceipts(files) {
   readEntryForm(); const e = S.sheet.draft;
-  for (const f of files) { let blob = f, type = f.type || "application/octet-stream"; if (type.startsWith("image/")) { try { blob = await resizeImage(f, 2000); type = "image/jpeg"; } catch {} } const id = uid("f"); await dbPut("files", { id, blob, type, name: f.name }); (e.receipts = e.receipts || []).push({ id, name: f.name, type }); }
+  const added = [];
+  for (const f of files) { let blob = f, type = f.type || "application/octet-stream"; if (type.startsWith("image/")) { try { blob = await resizeImage(f, 2400); type = "image/jpeg"; } catch {} } const id = uid("f"); await dbPut("files", { id, blob, type, name: f.name }); (e.receipts = e.receipts || []).push({ id, name: f.name, type }); if (type.startsWith("image/")) added.push(e.receipts.length - 1); }
   drawEntry();
+  if (added.length) openCropper(added[0], added.slice(1), true);
 }
 async function resizeImage(file, max = 1600) { const bmp = await createImageBitmap(file); const s = Math.min(1, max / Math.max(bmp.width, bmp.height)); const c = document.createElement("canvas"); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); return await new Promise(r => c.toBlob(r, "image/jpeg", 0.82)); }
 
@@ -740,6 +742,55 @@ async function doRestore() {
 async function saveMeta() { S.meta.stamp = Date.now(); await dbPut("meta", { id: "main", ...S.meta }); }
 async function fillStoreInfo() { const el = $("#storeInfo"); if (!el) return; let used = "Unknown", prot = "Unknown"; try { const e = await navigator.storage.estimate(); used = (e.usage / 1048576).toFixed(1) + " MB"; } catch {} try { prot = (await navigator.storage.persisted()) ? "Yes — Chrome won't clear it to save space" : "Not yet — requested when you save"; } catch {} el.innerHTML = `<dt>Storage used</dt><dd>${used}</dd><dt>Protected storage</dt><dd>${prot}</dd>`; }
 async function askPersist() { try { if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) await navigator.storage.persist(); } catch {} }
+/* ---- receipt crop & rotate (as in MyMaglites) ---- */
+let PE = null;
+async function openCropper(i, queue = [], fresh = false) {
+  readEntryForm(); const r = (S.sheet.draft.receipts || [])[i]; if (!r) return; const f = await dbGet("files", r.id); if (!f) { toast("Photo not found"); return; }
+  const bmp = await createImageBitmap(f.blob); const rc = document.createElement("canvas"); rc.width = bmp.width; rc.height = bmp.height; rc.getContext("2d").drawImage(bmp, 0, 0);
+  PE = { i, queue, rc, crop: { x: 0, y: 0, w: rc.width, h: rc.height }, drag: null, changed: false };
+  const el = document.createElement("div"); el.id = "pe"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Crop and rotate receipt");
+  el.innerHTML = `<div class="bar1"><button type="button" class="btn" data-act="peCancel">${fresh ? "Keep as is" : "Cancel"}</button><b>Crop receipt</b><button type="button" class="btn primary" data-act="peApply">Apply</button></div>
+  <div class="stage"><canvas id="peCanvas"></canvas></div>
+  <div class="tools"><button type="button" class="btn" data-act="peLeft">⟲ Rotate</button><button type="button" class="btn" data-act="peRight">Rotate ⟳</button><button type="button" class="btn" data-act="peReset">Reset</button></div>
+  <div class="small" style="text-align:center;color:#9aa4b0">Drag a corner to trim; drag inside the box to move it.${queue.length ? ` ${queue.length} more to go.` : ""}</div>`;
+  document.body.appendChild(el);
+  const cv = $("#peCanvas"); cv.addEventListener("pointerdown", peDown); cv.addEventListener("pointermove", peMove); cv.addEventListener("pointerup", peUp); cv.addEventListener("pointercancel", peUp);
+  peLayout(); window.addEventListener("resize", peLayout);
+}
+function peLayout() { if (!PE) return; const st = $("#pe .stage"), cv = $("#peCanvas"); const r = st.getBoundingClientRect(); const s = Math.min(r.width / PE.rc.width, r.height / PE.rc.height, 1); PE.scale = s; const dpr = window.devicePixelRatio || 1; cv.style.width = Math.round(PE.rc.width * s) + "px"; cv.style.height = Math.round(PE.rc.height * s) + "px"; cv.width = Math.round(PE.rc.width * s * dpr); cv.height = Math.round(PE.rc.height * s * dpr); PE.dpr = dpr; peDraw(); }
+function peDraw() {
+  const cv = $("#peCanvas"); if (!cv) return; const x = cv.getContext("2d"), k = PE.scale * PE.dpr, c = PE.crop;
+  x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, cv.width, cv.height); x.drawImage(PE.rc, 0, 0, cv.width, cv.height);
+  x.fillStyle = "rgba(0,0,0,.55)"; x.beginPath(); x.rect(0, 0, cv.width, cv.height); x.rect(c.x * k, c.y * k, c.w * k, c.h * k); x.fill("evenodd");
+  x.strokeStyle = "#3cc4ad"; x.lineWidth = 2 * PE.dpr; x.strokeRect(c.x * k, c.y * k, c.w * k, c.h * k);
+  x.fillStyle = "#3cc4ad"; const L = 26 * PE.dpr, T = 6 * PE.dpr, X1 = c.x * k, Y1 = c.y * k, X2 = (c.x + c.w) * k, Y2 = (c.y + c.h) * k; // corner brackets drawn inside the box so they're always visible
+  for (const [px, py, sx, sy] of [[X1, Y1, 1, 1], [X2, Y1, -1, 1], [X1, Y2, 1, -1], [X2, Y2, -1, -1]]) { x.fillRect(sx > 0 ? px : px - L, sy > 0 ? py : py - T, L, T); x.fillRect(sx > 0 ? px : px - T, sy > 0 ? py : py - L, T, L); }
+}
+function pePt(e) { const r = e.target.getBoundingClientRect(); return { x: (e.clientX - r.left) / PE.scale, y: (e.clientY - r.top) / PE.scale }; }
+function peDown(e) { const p = pePt(e), c = PE.crop, tol = 36 / PE.scale; const corners = [["tl", c.x, c.y], ["tr", c.x + c.w, c.y], ["bl", c.x, c.y + c.h], ["br", c.x + c.w, c.y + c.h]];
+  const hit = corners.find(([, cx, cy]) => Math.abs(p.x - cx) < tol && Math.abs(p.y - cy) < tol);
+  if (hit) PE.drag = { mode: hit[0], start: p, c0: { ...c } }; else if (p.x > c.x && p.x < c.x + c.w && p.y > c.y && p.y < c.y + c.h) PE.drag = { mode: "move", start: p, c0: { ...c } }; else return;
+  e.target.setPointerCapture(e.pointerId); e.preventDefault(); }
+function peMove(e) { if (!PE || !PE.drag) return; const p = pePt(e), d = PE.drag, W = PE.rc.width, H = PE.rc.height, min = Math.max(40, Math.min(W, H) * 0.05); let { x, y, w, h } = d.c0; const dx = p.x - d.start.x, dy = p.y - d.start.y;
+  if (d.mode === "move") { x = Math.min(Math.max(0, x + dx), W - w); y = Math.min(Math.max(0, y + dy), H - h); }
+  else { let x1 = x, y1 = y, x2 = x + w, y2 = y + h; if (d.mode[1] === "l") x1 = Math.min(Math.max(0, x1 + dx), x2 - min); else x2 = Math.max(Math.min(W, x2 + dx), x1 + min); if (d.mode[0] === "t") y1 = Math.min(Math.max(0, y1 + dy), y2 - min); else y2 = Math.max(Math.min(H, y2 + dy), y1 + min); x = x1; y = y1; w = x2 - x1; h = y2 - y1; }
+  PE.crop = { x, y, w, h }; PE.changed = true; peDraw(); }
+function peUp() { if (PE) PE.drag = null; }
+function peRotate(dir) { const o = PE.rc, n = document.createElement("canvas"); n.width = o.height; n.height = o.width; const x = n.getContext("2d"); x.translate(n.width / 2, n.height / 2); x.rotate(dir * Math.PI / 2); x.drawImage(o, -o.width / 2, -o.height / 2); PE.rc = n; PE.changed = true; peReset(); peLayout(); }
+function peReset() { PE.crop = { x: 0, y: 0, w: PE.rc.width, h: PE.rc.height }; }
+function peClose() { window.removeEventListener("resize", peLayout); const el = $("#pe"); if (el) el.remove(); const q = PE ? PE.queue : []; PE = null; if (q.length && S.sheet && S.sheet.kind === "entry") openCropper(q[0], q.slice(1), true); }
+async function peApply() {
+  if (!PE.changed) { peClose(); return; }
+  const c = PE.crop, s = Math.min(1, 2000 / Math.max(c.w, c.h)); const out = document.createElement("canvas"); out.width = Math.round(c.w * s); out.height = Math.round(c.h * s);
+  out.getContext("2d").drawImage(PE.rc, c.x, c.y, c.w, c.h, 0, 0, out.width, out.height);
+  const blob = await new Promise(r => out.toBlob(r, "image/jpeg", 0.85)); const id = uid("f");
+  const r = S.sheet.draft.receipts[PE.i]; await dbPut("files", { id, blob, type: "image/jpeg", name: r.name || id + ".jpg" });
+  const old = r.id; r.id = id; r.type = "image/jpeg";
+  if (!S.entries.some(x => (x.receipts || []).some(y => y.id === old))) await dbDel("files", old); // keep the original if a saved record still uses it
+  if (S.urls[old]) { URL.revokeObjectURL(S.urls[old]); delete S.urls[old]; }
+  peClose(); drawEntry(); toast("Receipt cropped — tap Save to keep it");
+}
+
 /* CSV */
 const CSV_COLS = [["vehicle", e => vName(vById(e.vehicleId))], ["rego", e => (vById(e.vehicleId) || {}).rego], ["type", e => TYPE_LABEL[e.type]], ["date"], ["odometer", e => e.odo], ["category", e => e.type === "expense" ? e.category : e.type === "fuel" ? "Fuel" : e.type === "charge" ? "Charging" : e.type === "service" ? "Service" : ""], ["workType", e => e.type === "service" ? (e.svcType || SVC_TYPES[0]) : ""], ["description", e => e.desc], ["cost", e => e.cost], ["litres"], ["pricePerLitre", e => e.ppl], ["fullTank", e => e.type === "fuel" ? (e.full !== false ? "Y" : "N") : ""], ["towing", e => e.towing ? "Y" : ""], ["L100km", e => { const d = fuelOf(vById(e.vehicleId)).info.get(e.id); return d && d.econ != null ? d.econ.toFixed(2) : ""; }], ["location"], ["grade"], ["workshop"], ["invoice", e => e.invoice || e.ref], ["nextServiceKm", e => e.nextKm], ["nextServiceDate", e => e.nextDate], ["priorOwner", e => isPrev(e, vById(e.vehicleId)) ? "Y" : ""], ["kWh", e => e.kwh], ["chargeWhere", e => e.where], ["charger", e => e.current], ["socStart"], ["socEnd"], ["sessionKwh", e => e.sessKwh], ["estCapacityKwh", e => { const c = capReading(e, vById(e.vehicleId)); return c ? c.cap.toFixed(2) : ""; }], ["costEstimated", e => e.costEst ? "Y" : ""], ["dealerBatteryPct", e => e.dealerSoh], ["battVolts", e => e.volts], ["battCCA", e => e.cca], ["battCCARated", e => e.ccaRated], ["battResult"], ["notes"], ["receipts", e => (e.receipts || []).length || ""]];
 function toCSV() { const q = v => { v = v == null ? "" : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }; const rows = [...S.entries].sort((a, b) => vName(vById(a.vehicleId)).localeCompare(vName(vById(b.vehicleId))) || byDateOdo(a, b)); return "﻿" + [CSV_COLS.map(c => c[0]).join(","), ...rows.map(e => CSV_COLS.map(([k, fn]) => q(fn ? fn(e) : e[k])).join(","))].join("\r\n"); }
@@ -1341,7 +1392,7 @@ document.addEventListener("visibilitychange", async () => {
   if (Date.now() - lastCheck > 60000) dbxSync();
 });
 window.addEventListener("online", () => dbxSync());
-document.addEventListener("change", e => { if (e.target.id === "wifiOnly") { S.meta.wifiOnly = e.target.checked; saveMeta(); paintStatus(); if (!S.meta.wifiOnly) dbxSync(); } });
+document.addEventListener("change", e => { const dp = e.target.dataset && e.target.dataset.dp; if (dp) { const n = parseFloat(String(e.target.value).replace(/[$,\s]/g, "")); if (isFinite(n)) e.target.value = n.toFixed(+dp); } if (e.target.id === "wifiOnly") { S.meta.wifiOnly = e.target.checked; saveMeta(); paintStatus(); if (!S.meta.wifiOnly) dbxSync(); } });
 
 /* ================= events ================= */
 document.addEventListener("click", async ev => {
@@ -1375,6 +1426,12 @@ document.addEventListener("click", async ev => {
     case "delEntryNo": readEntryForm(); S.sheet.confirmDel = false; drawEntry(); break;
     case "delEntryYes": { const e = S.entries.find(x => x.id === S.sheet.id); for (const r of e.receipts || []) await dbDel("files", r.id); await dbDel("entries", e.id); await reload(); toast("Deleted"); goBack(); break; }
     case "pickReceipt": readEntryForm(); $("#receiptIn").click(); break;
+    case "cropReceipt": await openCropper(+el.dataset.i); break;
+    case "peCancel": peClose(); break;
+    case "peApply": await peApply(); break;
+    case "peLeft": peRotate(-1); break;
+    case "peRight": peRotate(1); break;
+    case "peReset": peReset(); peDraw(); break;
     case "rmReceipt": { readEntryForm(); const r = S.sheet.draft.receipts.splice(+el.dataset.i, 1)[0]; if (r && !S.entries.some(x => (x.receipts || []).some(y => y.id === r.id))) await dbDel("files", r.id); drawEntry(); break; }
     case "renew": { const cat = { rego: "Registration", ctp: "CTP", ins: "Insurance" }[el.dataset.kind]; openEntry({ vid: id, type: "expense", preset: { category: cat } }); break; }
     case "statsFor": S.stat.vid = id; S.tab = "stats"; closeSheet(); render(); window.scrollTo(0, 0); break;

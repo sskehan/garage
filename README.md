@@ -1,4 +1,4 @@
-# MyGarage — vehicle records app (version 1.48)
+# MyGarage — vehicle records app (version 1.49)
 
 Fuel, kilometres, charging, servicing, costs, warranty, reminders and sale reports for every vehicle.
 Runs on your phone, works offline, and keeps a live backup in your own Dropbox.
@@ -60,6 +60,7 @@ When clearing Chrome's history, untick **Cookies and site data** — ticking it 
 Your data is not affected. When a file changes, `APP_VERSION` at the top of `app.js` and `VERSION` in `sw.js` change together.
 
 ## Version history
+- **1.49** — Fuel form: the Total $ box is wider so amounts like 127.42 fit.
 - **1.48** — Fuel form: Total $ comes first, then Litres; $ per litre shows 3 decimals so it fits.
 - **1.47** — "Log it" on a scheduled item no longer restarts the service countdown (new type: Service item only); a new battery logged the same day as a Replace test now clears it; battery-test description follows the type; CSV adds work type and battery readings; date boxes no longer cut off on narrow screens.
 - **1.46** — Battery test rows in the history are shorter (voltage and CCA %), with a tag if the result was Weak or Replace.
